@@ -1,0 +1,205 @@
+# Copyright (C) 2025 scooller
+# This file is distributed under the same license as the Sorteo SCO plugin.
+msgid ""
+msgstr ""
+"Project-Id-Version: Sorteo SCO 1.9.5\n"
+"Report-Msgid-Bugs-To: scoollerx@hotmail.com\n"
+"POT-Creation-Date: 2025-11-04 00:00:00+00:00\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language-Team: none\n"
+"PO-Revision-Date: 2025-11-04 00:00:00+00:00\n"
+"Last-Translator: Automatically generated\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#: sorteo-sco.php
+msgid "Ajustes"
+msgstr "Configurações"
+
+msgid "Documentación"
+msgstr "Documentação"
+
+msgid "Ver documentación"
+msgstr "Ver documentação"
+
+msgid "Ver opciones del plugin"
+msgstr "Ver opções do plugin"
+
+msgid "Opciones del plugin"
+msgstr "Opções do plugin"
+
+msgid "No se encontró el archivo README.md en el plugin."
+msgstr "Arquivo README.md não encontrado no plugin."
+
+msgid "Documentación de Sorteo"
+msgstr "Documentação do Sorteio"
+
+msgid "Ir a Ajustes"
+msgstr "Ir para Configurações"
+
+msgid "No tienes permisos para realizar esta acción."
+msgstr "Você não tem permissão para realizar esta ação."
+
+msgid "Token de seguridad inválido."
+msgstr "Token de segurança inválido."
+
+msgid "Error en la exportación."
+msgstr "Erro na exportação."
+
+msgid "Debe seleccionar un pedido."
+msgstr "Você deve selecionar um pedido."
+
+msgid "El pedido seleccionado no existe."
+msgstr "O pedido selecionado não existe."
+
+msgid "Premio"
+msgstr "Prêmio"
+
+msgid "Nonce inválido"
+msgstr "Nonce inválido"
+
+msgid "Premio sorpresa"
+msgstr "Prêmio surpresa"
+
+msgid "Sorteo Automático"
+msgstr "Sorteio Automático"
+
+msgid "Configuración del Sorteo"
+msgstr "Configuração do Sorteio"
+
+msgid "Período del sorteo"
+msgstr "Período do sorteio"
+
+msgid "Fecha inicio"
+msgstr "Data de início"
+
+msgid "Fecha fin"
+msgstr "Data de término"
+
+msgid "Premio del sorteo"
+msgstr "Prêmio do sorteio"
+
+msgid "Nombre del premio"
+msgstr "Nome do prêmio"
+
+msgid "Precio del premio"
+msgstr "Preço do prêmio"
+
+msgid "Categorías de productos"
+msgstr "Categorias de produtos"
+
+msgid "Productos específicos"
+msgstr "Produtos específicos"
+
+msgid "Estados de pedido"
+msgstr "Status do pedido"
+
+msgid "Ganancia mínima"
+msgstr "Lucro mínimo"
+
+msgid "Ejecutar Sorteo Manual"
+msgstr "Executar Sorteio Manual"
+
+msgid "Exportar Datos"
+msgstr "Exportar Dados"
+
+msgid "Historial de Sorteos"
+msgstr "Histórico de Sorteios"
+
+msgid "Métricas"
+msgstr "Métricas"
+
+msgid "Total de sorteos realizados"
+msgstr "Total de sorteios realizados"
+
+msgid "Total de pedidos elegibles"
+msgstr "Total de pedidos elegíveis"
+
+msgid "Ganancia total acumulada"
+msgstr "Lucro total acumulado"
+
+msgid "Ganancia del período actual"
+msgstr "Lucro do período atual"
+
+msgid "Próximo sorteo automático"
+msgstr "Próximo sorteio automático"
+
+msgid "Fecha"
+msgstr "Data"
+
+msgid "Pedido"
+msgstr "Pedido"
+
+msgid "Cliente"
+msgstr "Cliente"
+
+msgid "Ganancia"
+msgstr "Lucro"
+
+msgid "Tipo"
+msgstr "Tipo"
+
+msgid "Manual"
+msgstr "Manual"
+
+msgid "Automático"
+msgstr "Automático"
+
+msgid "Ganancia por día (últimos 7 días)"
+msgstr "Lucro por dia (últimos 7 dias)"
+
+msgid "Ganancia por día (últimos 30 días)"
+msgstr "Lucro por dia (últimos 30 dias)"
+
+msgid "Ganancia por día (últimos 90 días)"
+msgstr "Lucro por dia (últimos 90 dias)"
+
+msgid "Ganancia por día (rango personalizado)"
+msgstr "Lucro por dia (intervalo personalizado)"
+
+msgid "Distribución de premios"
+msgstr "Distribuição de prêmios"
+
+msgid "7 días"
+msgstr "7 dias"
+
+msgid "30 días"
+msgstr "30 dias"
+
+msgid "90 días"
+msgstr "90 dias"
+
+msgid "Rango personalizado"
+msgstr "Intervalo personalizado"
+
+msgid "Desde"
+msgstr "De"
+
+msgid "Hasta"
+msgstr "Até"
+
+msgid "Aplicar"
+msgstr "Aplicar"
+
+msgid "Premio Manual"
+msgstr "Prêmio Manual"
+
+msgid "Seleccionar pedido para otorgar premio manualmente"
+msgstr "Selecionar pedido para conceder prêmio manualmente"
+
+msgid "Buscar pedido..."
+msgstr "Buscar pedido..."
+
+msgid "Otorgar Premio"
+msgstr "Conceder Prêmio"
+
+msgid "Premio otorgado correctamente"
+msgstr "Prêmio concedido com sucesso"
+
+msgid "No hay pedidos elegibles"
+msgstr "Não há pedidos elegíveis"
+
+msgid "Seleccione un pedido"
+msgstr "Selecione um pedido"
