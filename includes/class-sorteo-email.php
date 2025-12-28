@@ -1,122 +1,212 @@
 <?php
-if ( ! defined( 'ABSPATH' ) ) {
+
+/**
+ * Sorteo SCO Email Handler
+ * 
+ * Gestiona el envío de emails de ganadores y descargas
+ * Versión mejorada con compatibilidad universal de temas
+ * 
+ * @package Sorteo_SCO
+ * @since 1.9.11
+ */
+
+if (! defined('ABSPATH')) {
 	exit;
 }
 
-class Sorteo_SCO_Email {
+class Sorteo_SCO_Email
+{
+
+	/**
+	 * Verifica si Font Awesome está cargado en el sitio
+	 * 
+	 * @return bool
+	 * @since 1.9.11
+	 */
+	private static function has_fontawesome()
+	{
+		global $wp_styles;
+		if (! isset($wp_styles->registered)) {
+			return false;
+		}
+		foreach ($wp_styles->registered as $style) {
+			if (strpos($style->src, 'font-awesome') !== false || strpos($style->src, 'fontawesome') !== false) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Obtiene un icono compatible según disponibilidad
+	 * 
+	 * @param string $type Tipo de icono (cart, download, check)
+	 * @return string HTML del icono o fallback unicode
+	 * @since 1.9.11
+	 */
+	private static function get_icon($type = 'download')
+	{
+		$icons = array(
+			'cart'     => self::has_fontawesome() ? '<i class="fa-solid fa-cart-plus"></i>' : '🛒',
+			'download' => self::has_fontawesome() ? '<i class="fa-solid fa-download"></i>' : '⬇',
+			'check'    => self::has_fontawesome() ? '<i class="fa-solid fa-check"></i>' : '✓',
+			'dice'     => self::has_fontawesome() ? '<i class="fa-solid fa-dice"></i>' : '🎲',
+		);
+		return isset($icons[$type]) ? $icons[$type] : '';
+	}
+
+	/**
+	 * Obtiene colores de email con fallback a configuración del tema
+	 * 
+	 * @return array Colores para usar en emails
+	 * @since 1.9.11
+	 */
+	private static function get_email_colors()
+	{
+		// Prioridad 1: Opciones de WooCommerce
+		$base_color = get_option('woocommerce_email_base_color');
+		$bg_color   = get_option('woocommerce_email_background_color');
+		$body_bg    = get_option('woocommerce_email_body_background_color');
+		$text_color = get_option('woocommerce_email_text_color');
+
+		// Prioridad 2: Theme mods (para temas que usan Customizer)
+		if (empty($base_color)) {
+			$base_color = get_theme_mod('primary_color', get_theme_mod('accent_color'));
+		}
+
+		// Fallback a valores por defecto
+		$defaults = array(
+			'base'      => '#96588a',
+			'bg'        => '#f7f7f7',
+			'body_bg'   => '#ffffff',
+			'text'      => '#3c3c3c',
+		);
+
+		return array(
+			'base'      => ! empty($base_color) ? $base_color : $defaults['base'],
+			'bg'        => ! empty($bg_color) ? $bg_color : $defaults['bg'],
+			'body_bg'   => ! empty($body_bg) ? $body_bg : $defaults['body_bg'],
+			'text'      => ! empty($text_color) ? $text_color : $defaults['text'],
+		);
+	}
+
+	/**
+	 * Obtiene imagen de cabecera con validación y fallback
+	 * 
+	 * @return array|false Array con 'url' y 'alt' o false si no hay imagen
+	 * @since 1.9.11
+	 */
+	private static function get_header_image()
+	{
+		$img_url = get_option('woocommerce_email_header_image');
+
+		// Si no hay imagen configurada, intentar usar el logo del sitio
+		if (empty($img_url) && function_exists('get_custom_logo')) {
+			$custom_logo_id = get_theme_mod('custom_logo');
+			if ($custom_logo_id) {
+				$logo = wp_get_attachment_image_src($custom_logo_id, 'full');
+				if ($logo) {
+					$img_url = $logo[0];
+				}
+			}
+		}
+
+		if (empty($img_url)) {
+			return false;
+		}
+
+		return array(
+			'url' => esc_url($img_url),
+			'alt' => get_bloginfo('name'),
+		);
+	}
+
 	/**
 	 * Enviar email al ganador
 	 * @param int $order_id ID del pedido (no user_id)
 	 * @param string $prize Nombre del premio (no usado, se usa config)
 	 */
-	public static function send_winner_email( $order_id, $prize = '' ) {
-		// debug log removed
-		
-		// Obtener el pedido de WooCommerce
-		$order = wc_get_order( $order_id );
-		if ( ! $order ) {
-			// debug log removed
+	public static function send_winner_email($order_id, $prize = '')
+	{
+		$order = wc_get_order($order_id);
+		if (! $order) {
 			return false;
 		}
-		
-		// Obtener email del billing (funciona con usuarios registrados y guest)
+
 		$to = $order->get_billing_email();
-		if ( empty( $to ) ) {
-			// debug log removed
+		if (empty($to)) {
 			return false;
 		}
-		
-		// debug logs removed
-		
+
 		// Obtener nombre del billing
 		$first_name = $order->get_billing_first_name();
 		$last_name = $order->get_billing_last_name();
-		$user_name = trim( $first_name . ' ' . $last_name );
-		if ( empty( $user_name ) ) {
-			$user_name = $to; // Usar email como fallback
+		$user_name = trim($first_name . ' ' . $last_name);
+		if (empty($user_name)) {
+			$user_name = $to;
 		}
-		
-		$site_name = get_bloginfo( 'name' );
-		
+
+		$site_name = get_bloginfo('name');
+
 		// Obtener el asunto del email de la configuración
 		$subject_template = get_option('sorteo_sco_email_subject', '[{sitio}] ¡Felicidades, eres ganador!');
-		
+
 		// Obtener el contenido del email de la configuración
 		$notice_raw = get_option('sorteo_sco_email_content', '');
-		if ( empty( $notice_raw ) ) {
-			// Fallback: usar el mensaje del aviso si no hay contenido de email
+		if (empty($notice_raw)) {
 			$notice_raw = get_option('sorteo_sco_aviso_personalizado', '');
-			if ( empty( $notice_raw ) ) {
-				// Fallback final
-				$notice_raw = __( '¡Felicidades {nombre}! Has ganado el premio: {premio} valorado en {valor}', 'sorteo-sco' );
+			if (empty($notice_raw)) {
+				$notice_raw = __('¡Felicidades {nombre}! Has ganado el premio: {premio} valorado en {valor}', 'sorteo-sco');
 			}
 		}
-		
-		// Procesar campos personalizados para el contenido
-		$message = self::process_custom_fields_for_order( $notice_raw, $order );
-		
-		// Procesar campos personalizados para el asunto
-		$subject = self::process_custom_fields_for_order( $subject_template, $order );
-		
+
+		// Procesar campos personalizados
+		$message = self::process_custom_fields_for_order($notice_raw, $order);
+		$subject = self::process_custom_fields_for_order($subject_template, $order);
+
 		// Headers con From personalizado
-		$headers = array( 'Content-Type: text/plain; charset=UTF-8' );
-		
-		// Obtener from email y name de la configuración
+		$headers = array('Content-Type: text/plain; charset=UTF-8');
+
 		$from_email = get_option('sorteo_sco_from_email', get_option('admin_email'));
 		$from_name = get_option('sorteo_sco_from_name', get_bloginfo('name'));
-		
-		if ( ! empty( $from_email ) && is_email( $from_email ) ) {
+
+		if (! empty($from_email) && is_email($from_email)) {
 			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
 		}
-		
+
 		// Enviar email
-		$sent = wp_mail( $to, $subject, $message, $headers );
-		if ( ! $sent && function_exists( 'error_log' ) ) {
-			// Log only if there's an error sending the message
-			error_log( sprintf( 'Sorteo SCO: ERROR al enviar email de descargas para pedido #%d al email %s', $order->get_id(), $to ) );
+		$sent = wp_mail($to, $subject, $message, $headers);
+		if (! $sent && function_exists('error_log')) {
+			error_log(sprintf('Sorteo SCO: ERROR al enviar email de ganador para pedido #%d al email %s', $order->get_id(), $to));
 		}
-		
-		// Log del envío
-		if ( $sent ) {
-			// removed debug log
-		} else {
-			// removed debug log
-		}
-		
+
 		return $sent;
 	}
-	
+
 	/**
 	 * Procesar campos personalizados usando datos del pedido
 	 */
-	private static function process_custom_fields_for_order( $message, $order ) {
-		// Obtener nombre del cliente
+	private static function process_custom_fields_for_order($message, $order)
+	{
 		$first_name = $order->get_billing_first_name();
 		$last_name = $order->get_billing_last_name();
-		$user_name = trim( $first_name . ' ' . $last_name );
-		if ( empty( $user_name ) ) {
+		$user_name = trim($first_name . ' ' . $last_name);
+		if (empty($user_name)) {
 			$user_name = $order->get_billing_email();
 		}
-		
-		// Obtener datos del premio
+
 		$prize_name = get_option('sorteo_sco_prize_name', 'Premio sorpresa');
 		$prize_price = floatval(get_option('sorteo_sco_prize_price', 0));
 		$prize_value = sorteo_sco_format_price($prize_price);
-
-		// Obtener fecha actual
 		$fecha_sorteo = date_i18n('d/m/Y H:i');
-
-		// Obtener nombre del sitio
 		$site_name = get_bloginfo('name');
 
-		// Reemplazos disponibles
 		$replacements = array(
 			'{nombre}' => $user_name,
 			'{premio}' => $prize_name,
 			'{valor}' => $prize_value,
 			'{fecha}' => $fecha_sorteo,
 			'{sitio}' => $site_name,
-			// Alias largos para compatibilidad
 			'{nombre_usuario}' => $user_name,
 			'{nombre_premio}' => $prize_name,
 			'{valor_premio}' => $prize_value,
@@ -124,279 +214,387 @@ class Sorteo_SCO_Email {
 			'{nombre_sitio}' => $site_name
 		);
 
-		// Aplicar reemplazos
 		return str_replace(array_keys($replacements), array_values($replacements), $message);
 	}
 
 	/**
-	 * Enviar email independiente con TODAS las descargas del pedido
-	 * Se dispara cuando el pedido pasa a "completado" y solo una vez por pedido.
-	 * Incluye descargas normales y las generadas por sco_package (permiso en tabla WC).
+	 * Obtiene permisos de descarga con caché
+	 * 
+	 * @param int $order_id ID del pedido
+	 * @return int Cantidad de permisos
+	 * @since 1.9.11
 	 */
-	public static function send_order_downloads_email( $order_id ) {
-		if ( ! function_exists( 'wc_get_order' ) ) {
+	private static function get_permissions_count($order_id)
+	{
+		$cache_key = 'sco_perms_count_' . $order_id;
+		$perm_count = wp_cache_get($cache_key);
+
+		if (false === $perm_count) {
+			global $wpdb;
+			$perm_table = $wpdb->prefix . 'woocommerce_downloadable_product_permissions';
+			$perm_count = $wpdb->get_var($wpdb->prepare(
+				"SELECT COUNT(*) FROM {$perm_table} WHERE order_id = %d",
+				$order_id
+			));
+			$perm_count = intval($perm_count);
+
+			// Cachear por 1 hora
+			wp_cache_set($cache_key, $perm_count, '', 3600);
+		}
+
+		return $perm_count;
+	}
+
+	/**
+	 * Renderiza HTML del email de descargas
+	 * Usa template sobrescribible por temas
+	 * 
+	 * @param WC_Order $order Pedido
+	 * @param array $downloads Array de descargas
+	 * @return string HTML del email
+	 * @since 1.9.11
+	 */
+	private static function render_email_html($order, $downloads)
+	{
+		$colors = self::get_email_colors();
+		$header_img = self::get_header_image();
+
+		$to = $order->get_billing_email();
+		$first_name = $order->get_billing_first_name();
+		$last_name = $order->get_billing_last_name();
+		$user_name = trim($first_name . ' ' . $last_name);
+		if (empty($user_name)) {
+			$user_name = $to;
+		}
+
+		$site_name = get_bloginfo('name');
+
+		// Permitir que temas personalicen via template
+		$template_path = locate_template(array(
+			'sorteo-sco/emails/downloads-email.php',
+			'woocommerce/emails/sorteo-downloads.php',
+		));
+
+		if ($template_path) {
+			ob_start();
+			include $template_path;
+			return ob_get_clean();
+		}
+
+		// Template por defecto
+		ob_start();
+?>
+		<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+		<html xmlns="http://www.w3.org/1999/xhtml" <?php language_attributes(); ?>>
+
+		<head>
+			<meta http-equiv="Content-Type" content="text/html; charset=<?php bloginfo('charset'); ?>" />
+			<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+			<title><?php echo esc_html(sprintf(__('[%s] Tus descargas del pedido #%s', 'sorteo-sco'), $site_name, $order->get_order_number())); ?></title>
+			<!--[if mso]>
+		<style type="text/css">
+			body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
+		</style>
+		<![endif]-->
+		</head>
+
+		<body <?php echo is_rtl() ? 'rightmargin' : 'leftmargin'; ?>="0" marginwidth="0" topmargin="0" marginheight="0" offset="0" style="padding:0;margin:0;background-color:<?php echo esc_attr($colors['bg']); ?>;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+			<div id="wrapper" dir="<?php echo is_rtl() ? 'rtl' : 'ltr'; ?>" style="background-color:<?php echo esc_attr($colors['bg']); ?>;margin:0;padding:70px 0 70px 0;width:100%;">
+				<table border="0" cellpadding="0" cellspacing="0" height="100%" width="100%">
+					<tr>
+						<td align="center" valign="top">
+							<?php if ($header_img) : ?>
+								<div id="template_header_image" style="margin-bottom:20px;">
+									<p style="margin-top:0;"><img src="<?php echo esc_url($header_img['url']); ?>" alt="<?php echo esc_attr($header_img['alt']); ?>" style="border:none;display:inline-block;font-size:14px;font-weight:bold;max-height:250px;width:auto;height:auto;outline:none;text-decoration:none;" /></p>
+								</div>
+							<?php endif; ?>
+
+							<table border="0" cellpadding="0" cellspacing="0" width="600" id="template_container" style="background-color:<?php echo esc_attr($colors['body_bg']); ?>;border:1px solid #dedede;border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">
+								<tr>
+									<td align="center" valign="top">
+										<!-- Header -->
+										<table border="0" cellpadding="0" cellspacing="0" width="100%" id="template_header" style="background-color:<?php echo esc_attr($colors['base']); ?>;color:#ffffff;border-bottom:0;font-weight:bold;line-height:100%;vertical-align:middle;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;border-radius:3px 3px 0 0;">
+											<tr>
+												<td id="header_wrapper" style="padding:36px 48px;display:block;">
+													<h1 style="font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:30px;font-weight:300;line-height:150%;margin:0;text-align:<?php echo is_rtl() ? 'right' : 'left'; ?>;color:#ffffff;background-color:inherit;">
+														<?php esc_html_e('Tus descargas', 'sorteo-sco'); ?>
+													</h1>
+												</td>
+											</tr>
+										</table>
+										<!-- End Header -->
+									</td>
+								</tr>
+								<tr>
+									<td align="center" valign="top">
+										<!-- Body -->
+										<table border="0" cellpadding="0" cellspacing="0" width="600" id="template_body">
+											<tr>
+												<td valign="top" id="body_content" style="background-color:<?php echo esc_attr($colors['body_bg']); ?>;">
+													<!-- Content -->
+													<table border="0" cellpadding="20" cellspacing="0" width="100%">
+														<tr>
+															<td valign="top" style="padding:48px 48px 32px;">
+																<div id="body_content_inner" style="color:<?php echo esc_attr($colors['text']); ?>;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:14px;line-height:150%;text-align:<?php echo is_rtl() ? 'right' : 'left'; ?>;">
+																	<p style="margin:0 0 16px;"><?php echo esc_html(sprintf(__('Hola %s', 'sorteo-sco'), $user_name)); ?>,</p>
+																	<p style="margin:0 0 16px;"><?php echo esc_html(sprintf(__('Aquí están tus enlaces de descarga para el pedido #%s', 'sorteo-sco'), $order->get_order_number())); ?>:</p>
+
+																	<h2 style="color:<?php echo esc_attr($colors['base']); ?>;display:block;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:18px;font-weight:bold;line-height:130%;margin:0 0 18px;text-align:<?php echo is_rtl() ? 'right' : 'left'; ?>;">
+																		<?php esc_html_e('Descargas', 'sorteo-sco'); ?> (<?php echo esc_html(count($downloads)); ?>)
+																	</h2>
+
+																	<table cellspacing="0" cellpadding="6" border="1" style="width:100%;border:1px solid #e5e5e5;border-collapse:collapse;">
+																		<thead>
+																			<tr>
+																				<th scope="col" style="text-align:<?php echo is_rtl() ? 'right' : 'left'; ?>;border:1px solid #e5e5e5;padding:12px;background-color:#f8f8f8;color:<?php echo esc_attr($colors['text']); ?>;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:14px;">
+																					<?php esc_html_e('Producto', 'sorteo-sco'); ?>
+																				</th>
+																				<th scope="col" style="text-align:<?php echo is_rtl() ? 'right' : 'left'; ?>;border:1px solid #e5e5e5;padding:12px;background-color:#f8f8f8;color:<?php echo esc_attr($colors['text']); ?>;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:14px;">
+																					<?php esc_html_e('Descarga', 'sorteo-sco'); ?>
+																				</th>
+																			</tr>
+																		</thead>
+																		<tbody>
+																			<?php foreach ($downloads as $d) :
+																				$name = isset($d['download_name']) ? $d['download_name'] : '';
+																				$url  = isset($d['download_url']) ? $d['download_url'] : '';
+																			?>
+																				<tr>
+																					<td style="text-align:<?php echo is_rtl() ? 'right' : 'left'; ?>;border:1px solid #e5e5e5;padding:12px;color:<?php echo esc_attr($colors['text']); ?>;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:14px;">
+																						<?php echo esc_html($name); ?>
+																					</td>
+																					<td style="text-align:<?php echo is_rtl() ? 'right' : 'left'; ?>;border:1px solid #e5e5e5;padding:12px;">
+																						<a href="<?php echo esc_url($url); ?>" style="color:<?php echo esc_attr($colors['base']); ?>;font-weight:normal;text-decoration:underline;">
+																							<?php echo self::get_icon('download'); ?> <?php esc_html_e('Descargar', 'sorteo-sco'); ?>
+																						</a>
+																					</td>
+																				</tr>
+																			<?php endforeach; ?>
+																		</tbody>
+																	</table>
+
+																	<?php if (function_exists('wc_get_account_endpoint_url')) : ?>
+																		<p style="margin:24px 0 0;">
+																			<?php esc_html_e('También puedes acceder a estas descargas desde', 'sorteo-sco'); ?>
+																			<a href="<?php echo esc_url(wc_get_account_endpoint_url('downloads')); ?>" style="color:<?php echo esc_attr($colors['base']); ?>;font-weight:normal;text-decoration:underline;">
+																				<?php esc_html_e('tu cuenta', 'sorteo-sco'); ?>
+																			</a>.
+																		</p>
+																	<?php endif; ?>
+																</div>
+															</td>
+														</tr>
+													</table>
+													<!-- End Content -->
+												</td>
+											</tr>
+										</table>
+										<!-- End Body -->
+									</td>
+								</tr>
+							</table>
+						</td>
+					</tr>
+					<tr>
+						<td align="center" valign="top">
+							<!-- Footer -->
+							<table border="0" cellpadding="10" cellspacing="0" width="600" id="template_footer">
+								<tr>
+									<td valign="top" style="padding:0;border-radius:6px;">
+										<table border="0" cellpadding="10" cellspacing="0" width="100%">
+											<tr>
+												<td colspan="2" valign="middle" id="credit" style="border-radius:6px;border:0;color:#8a8a8a;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:12px;line-height:150%;text-align:center;padding:24px 0;">
+													<?php
+													$footer_text = apply_filters('woocommerce_email_footer_text', get_option('woocommerce_email_footer_text'));
+													if ($footer_text) {
+														echo wp_kses_post(wpautop(wptexturize($footer_text)));
+													} else {
+														echo esc_html($site_name) . ' - ' . esc_html(get_bloginfo('description'));
+													}
+													?>
+												</td>
+											</tr>
+										</table>
+									</td>
+								</tr>
+							</table>
+							<!-- End Footer -->
+						</td>
+					</tr>
+				</table>
+			</div>
+		</body>
+
+		</html>
+<?php
+		return ob_get_clean();
+	}
+
+	/**
+	 * Enviar email independiente con TODAS las descargas del pedido
+	 * Se dispara cuando el pedido pasa a estado configurado y solo una vez por pedido.
+	 * Incluye descargas normales y las generadas por sco_package (permiso en tabla WC).
+	 * 
+	 * Mejoras v1.9.11:
+	 * - Lock transient para evitar duplicados por race conditions
+	 * - Caché de permisos
+	 * - Colores con fallback a theme mods
+	 * - DOCTYPE compatible con clientes de email
+	 * - Iconos condicionales según disponibilidad de Font Awesome
+	 * - Template sobrescribible por temas
+	 */
+	public static function send_order_downloads_email($order_id)
+	{
+		if (! function_exists('wc_get_order')) {
 			return false;
 		}
 
-		$order = wc_get_order( $order_id );
-		if ( ! $order ) {
+		$order = wc_get_order($order_id);
+		if (! $order) {
 			return false;
 		}
 
-		// debug logs removed
+		// Control de envío único con transient lock
+		$lock_key = 'sco_sending_email_' . $order_id;
+		if (get_transient($lock_key)) {
+			return false; // Ya se está enviando
+		}
+		set_transient($lock_key, true, 120); // Lock por 2 minutos
 
 		// Early exit if already sent
-		if ( 'yes' === $order->get_meta( '_sco_pkg_downloads_email_sent' ) ) {
-				// skip debug log
-			return true;
-		}
-
-		// Evitar duplicados
-		if ( 'yes' === $order->get_meta( '_sco_pkg_downloads_email_sent' ) ) {
+		if ('yes' === $order->get_meta('_sco_pkg_downloads_email_sent')) {
+			delete_transient($lock_key);
 			return true;
 		}
 
 		// Reunir descargas: método nativo + permisos (merge sin duplicados por product_id|download_id)
-		$std_downloads = method_exists( $order, 'get_downloadable_items' ) ? (array) $order->get_downloadable_items() : array();
+		$std_downloads = method_exists($order, 'get_downloadable_items') ? (array) $order->get_downloadable_items() : array();
 		$downloads      = array();
 		$seen_keys      = array(); // product_id|download_id
 		$seen_urls      = array(); // fallback URL
 
-		foreach ( $std_downloads as $d ) {
-			$product_id  = isset( $d['product_id'] ) ? (int) $d['product_id'] : 0;
-			$download_id = isset( $d['download_id'] ) ? (string) $d['download_id'] : '';
-			$name        = isset( $d['download_name'] ) ? $d['download_name'] : '';
-			$url         = isset( $d['download_url'] ) ? $d['download_url'] : '';
-			$key         = $product_id && $download_id ? ( $product_id . '|' . $download_id ) : '';
-			if ( $key ) {
-				if ( isset( $seen_keys[ $key ] ) ) { continue; }
-				$seen_keys[ $key ] = true;
+		foreach ($std_downloads as $d) {
+			$product_id  = isset($d['product_id']) ? (int) $d['product_id'] : 0;
+			$download_id = isset($d['download_id']) ? (string) $d['download_id'] : '';
+			$name        = isset($d['download_name']) ? $d['download_name'] : '';
+			$url         = isset($d['download_url']) ? $d['download_url'] : '';
+			$key         = $product_id && $download_id ? ($product_id . '|' . $download_id) : '';
+			if ($key) {
+				if (isset($seen_keys[$key])) {
+					continue;
+				}
+				$seen_keys[$key] = true;
+			} elseif ($url) {
+				if (isset($seen_urls[$url])) {
+					continue;
+				}
+				$seen_urls[$url] = true;
 			}
-			elseif ( $url ) {
-				if ( isset( $seen_urls[ $url ] ) ) { continue; }
-				$seen_urls[ $url ] = true;
-			}
-			$downloads[] = array( 'download_url' => $url, 'download_name' => $name );
+			$downloads[] = array('download_url' => $url, 'download_name' => $name);
 		}
 
+		// Obtener permisos adicionales de la tabla con caché
 		global $wpdb;
 		$perm_table = $wpdb->prefix . 'woocommerce_downloadable_product_permissions';
-		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT product_id, download_id, order_key, user_email FROM {$perm_table} WHERE order_id = %d", $order->get_id() ), ARRAY_A );
-		$perm_count = is_array( $rows ) ? count( $rows ) : 0;
-		if ( ! empty( $rows ) ) {
-			foreach ( $rows as $r ) {
+		$cache_key = 'sco_perms_' . $order_id;
+		$rows = wp_cache_get($cache_key);
+
+		if (false === $rows) {
+			$rows = $wpdb->get_results($wpdb->prepare("SELECT product_id, download_id, order_key, user_email FROM {$perm_table} WHERE order_id = %d", $order->get_id()), ARRAY_A);
+			wp_cache_set($cache_key, $rows, '', 3600); // Cachear 1 hora
+		}
+
+		$perm_count = is_array($rows) ? count($rows) : 0;
+
+		if (! empty($rows)) {
+			foreach ($rows as $r) {
 				$pid         = (int) $r['product_id'];
 				$download_id = $r['download_id'];
 				$order_key   = $r['order_key'];
 				$user_email  = $r['user_email'];
 
-				$prod = wc_get_product( $pid );
-				$name = $prod ? $prod->get_name() : __( 'Descarga', 'sorteo-sco' );
-				if ( $prod ) {
+				$prod = wc_get_product($pid);
+				$name = $prod ? $prod->get_name() : __('Descarga', 'sorteo-sco');
+				if ($prod) {
 					$files = $prod->get_downloads();
-					if ( isset( $files[ $download_id ] ) ) {
-						$name = $files[ $download_id ]->get_name();
+					if (isset($files[$download_id])) {
+						$name = $files[$download_id]->get_name();
 					}
 				}
 
-				$url = add_query_arg( array(
+				$url = add_query_arg(array(
 					'download_file' => $pid,
 					'order'         => $order_key,
-					'email'         => rawurlencode( $user_email ),
+					'email'         => rawurlencode($user_email),
 					'key'           => $download_id,
-				), home_url( '/' ) );
+				), home_url('/'));
 
 				$key = $pid . '|' . $download_id;
-				if ( isset( $seen_keys[ $key ] ) ) { continue; }
-				$seen_keys[ $key ] = true;
-				$downloads[] = array( 'download_url' => $url, 'download_name' => $name );
+				if (isset($seen_keys[$key])) {
+					continue;
+				}
+				$seen_keys[$key] = true;
+				$downloads[] = array('download_url' => $url, 'download_name' => $name);
 			}
 		}
 
-		if ( empty( $downloads ) ) {
-			$order->add_order_note( sprintf( 'Descargas no disponibles: no se envió email de descargas para el pedido #%s (ID %d).', $order->get_order_number(), $order->get_id() ) );
+		if (empty($downloads)) {
+			delete_transient($lock_key);
+			$order->add_order_note(sprintf('Descargas no disponibles: no se envió email de descargas para el pedido #%s (ID %d).', $order->get_order_number(), $order->get_id()));
 			return false;
 		}
-
-		$std_count    = is_array( $std_downloads ) ? count( $std_downloads ) : 0;
-		$merged_count = is_array( $downloads ) ? count( $downloads ) : 0;
-		// removed debug log for counts
 
 		// Si el pedido tiene paquetes pero aún no hay permisos, reintentar vía cron en breve
 		$has_pkg = false;
-		foreach ( $order->get_items() as $it ) {
+		foreach ($order->get_items() as $it) {
 			$p = $it->get_product();
-			if ( $p && $p->get_type() === 'sco_package' ) { $has_pkg = true; break; }
-		}
-		if ( $has_pkg && isset( $perm_count ) && (int) $perm_count === 0 ) {
-			if ( function_exists( 'wp_schedule_single_event' ) ) {
-				$scheduled_ts = time() + 45;
-				wp_schedule_single_event( $scheduled_ts, 'sorteo_sco_send_downloads_email_event', array( (int) $order->get_id() ) );
+			if ($p && $p->get_type() === 'sco_package') {
+				$has_pkg = true;
+				break;
 			}
-			$order->add_order_note( sprintf( 'Descargas pendientes para pedido #%s (ID %d): reintento programado para %s (hook: %s).', $order->get_order_number(), $order->get_id(), date_i18n( 'd/m/Y H:i', $scheduled_ts ), 'sorteo_sco_send_downloads_email_event' ) );
+		}
+		if ($has_pkg && isset($perm_count) && (int) $perm_count === 0) {
+			delete_transient($lock_key);
+			if (function_exists('wp_schedule_single_event')) {
+				$scheduled_ts = time() + 45;
+				wp_schedule_single_event($scheduled_ts, 'sorteo_sco_send_downloads_email_event', array((int) $order->get_id()));
+			}
+			$order->add_order_note(sprintf('Descargas pendientes para pedido #%s (ID %d): reintento programado para %s (hook: %s).', $order->get_order_number(), $order->get_id(), date_i18n('d/m/Y H:i', $scheduled_ts), 'sorteo_sco_send_downloads_email_event'));
 			return false;
 		}
 
-		$to         = $order->get_billing_email();
-		$first_name = $order->get_billing_first_name();
-		$last_name  = $order->get_billing_last_name();
-		$user_name  = trim( $first_name . ' ' . $last_name );
-		if ( empty( $user_name ) ) {
-			$user_name = $to;
-		}
+		$to = $order->get_billing_email();
+		$site_name = get_bloginfo('name');
+		$subject = sprintf(__('[%s] Tus descargas del pedido #%s', 'sorteo-sco'), $site_name, $order->get_order_number());
 
-		$site_name = get_bloginfo( 'name' );
-		$subject   = sprintf( __( '[%s] Tus descargas del pedido #%s', 'sorteo-sco' ), $site_name, $order->get_order_number() );
+		// Renderizar HTML usando sistema mejorado
+		$message = self::render_email_html($order, $downloads);
 
-		// Obtener colores del tema WooCommerce
-		$base_color     = get_option( 'woocommerce_email_base_color', '#96588a' );
-		$bg_color       = get_option( 'woocommerce_email_background_color', '#f7f7f7' );
-		$body_bg        = get_option( 'woocommerce_email_body_background_color', '#ffffff' );
-		$text_color     = get_option( 'woocommerce_email_text_color', '#3c3c3c' );
+		// Permitir filtrado del HTML final
+		$message = apply_filters('sorteo_sco_downloads_email_html', $message, $order, $downloads);
 
-		// Construir HTML con estilo de WooCommerce
-		ob_start();
-		?>
-		<!DOCTYPE html>
-		<html <?php language_attributes(); ?>>
-			<head>
-				<meta http-equiv="Content-Type" content="text/html; charset=<?php bloginfo( 'charset' ); ?>" />
-				<title><?php echo esc_html( $subject ); ?></title>
-			</head>
-			<body <?php echo is_rtl() ? 'rightmargin' : 'leftmargin'; ?>="0" marginwidth="0" topmargin="0" marginheight="0" offset="0" style="padding:0;margin:0;background-color:<?php echo esc_attr( $bg_color ); ?>;">
-				<div id="wrapper" dir="<?php echo is_rtl() ? 'rtl' : 'ltr'; ?>" style="background-color:<?php echo esc_attr( $bg_color ); ?>;margin:0;padding:70px 0;width:100%;-webkit-text-size-adjust:none;">
-					<table border="0" cellpadding="0" cellspacing="0" height="100%" width="100%">
-						<tr>
-							<td align="center" valign="top">
-								<div id="template_header_image">
-									<?php if ( $img = get_option( 'woocommerce_email_header_image' ) ) : ?>
-										<p style="margin-top:0;"><img src="<?php echo esc_url( $img ); ?>" alt="<?php echo esc_attr( $site_name ); ?>" style="height: 250px;" /></p>
-									<?php endif; ?>
-								</div>
-								<table border="0" cellpadding="0" cellspacing="0" width="600" id="template_container" style="background-color:<?php echo esc_attr( $body_bg ); ?>;border:1px solid #dedede;border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,0.1);">
-									<tr>
-										<td align="center" valign="top">
-											<!-- Header -->
-											<table border="0" cellpadding="0" cellspacing="0" width="100%" id="template_header" style="background-color:<?php echo esc_attr( $base_color ); ?>;color:#ffffff;border-bottom:0;font-weight:bold;line-height:100%;vertical-align:middle;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;border-radius:3px 3px 0 0;">
-												<tr>
-													<td id="header_wrapper" style="padding:36px 48px;display:block;">
-														<h1 style="font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:30px;font-weight:300;line-height:150%;margin:0;text-align:left;color:#ffffff;background-color:inherit;">
-															<?php esc_html_e( 'Tus descargas', 'sorteo-sco' ); ?>
-														</h1>
-													</td>
-												</tr>
-											</table>
-											<!-- End Header -->
-										</td>
-									</tr>
-									<tr>
-										<td align="center" valign="top">
-											<!-- Body -->
-											<table border="0" cellpadding="0" cellspacing="0" width="600" id="template_body">
-												<tr>
-													<td valign="top" id="body_content" style="background-color:<?php echo esc_attr( $body_bg ); ?>;">
-														<!-- Content -->
-														<table border="0" cellpadding="20" cellspacing="0" width="100%">
-															<tr>
-																<td valign="top" style="padding:48px 48px 32px;">
-																	<div id="body_content_inner" style="color:<?php echo esc_attr( $text_color ); ?>;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:14px;line-height:150%;text-align:left;">
-																		<p style="margin:0 0 16px;"><?php echo esc_html( sprintf( __( 'Hola %s', 'sorteo-sco' ), $user_name ) ); ?>,</p>
-																		<p style="margin:0 0 16px;"><?php echo esc_html( sprintf( __( 'Aquí están tus enlaces de descarga para el pedido #%s', 'sorteo-sco' ), $order->get_order_number() ) ); ?>:</p>
-																		
-																		<h2 style="color:<?php echo esc_attr( $base_color ); ?>;display:block;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:18px;font-weight:bold;line-height:130%;margin:0 0 18px;text-align:left;">
-																			<?php esc_html_e( 'Descargas', 'sorteo-sco' ); ?> (<?php echo esc_html( count( $downloads ) ); ?>)
-																		</h2>
-																		
-																		<table cellspacing="0" cellpadding="6" border="1" style="width:100%;border:1px solid #e5e5e5;border-collapse:collapse;">
-																			<thead>
-																				<tr>
-																					<th scope="col" style="text-align:left;border:1px solid #e5e5e5;padding:12px;background-color:#f8f8f8;color:<?php echo esc_attr( $text_color ); ?>;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:14px;">
-																						<?php esc_html_e( 'Producto', 'sorteo-sco' ); ?>
-																					</th>
-																					<th scope="col" style="text-align:left;border:1px solid #e5e5e5;padding:12px;background-color:#f8f8f8;color:<?php echo esc_attr( $text_color ); ?>;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:14px;">
-																						<?php esc_html_e( 'Descarga', 'sorteo-sco' ); ?>
-																					</th>
-																				</tr>
-																			</thead>
-																			<tbody>
-																				<?php foreach ( $downloads as $d ) :
-																					$name = isset( $d['download_name'] ) ? $d['download_name'] : '';
-																					$url  = isset( $d['download_url'] ) ? $d['download_url'] : '';
-																				?>
-																				<tr>
-																					<td style="text-align:left;border:1px solid #e5e5e5;padding:12px;color:<?php echo esc_attr( $text_color ); ?>;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:14px;">
-																						<?php echo esc_html( $name ); ?>
-																					</td>
-																					<td style="text-align:left;border:1px solid #e5e5e5;padding:12px;">
-																						<a href="<?php echo esc_url( $url ); ?>" style="color:<?php echo esc_attr( $base_color ); ?>;font-weight:normal;text-decoration:underline;">
-																							<?php esc_html_e( 'Descargar', 'sorteo-sco' ); ?>
-																						</a>
-																					</td>
-																				</tr>
-																				<?php endforeach; ?>
-																			</tbody>
-																		</table>
-																		
-																		<p style="margin:24px 0 0;">
-																			<?php esc_html_e( 'También puedes acceder a estas descargas desde', 'sorteo-sco' ); ?>
-																			<a href="<?php echo esc_url( wc_get_account_endpoint_url( 'downloads' ) ); ?>" style="color:<?php echo esc_attr( $base_color ); ?>;font-weight:normal;text-decoration:underline;">
-																				<?php esc_html_e( 'tu cuenta', 'sorteo-sco' ); ?>
-																			</a>.
-																		</p>
-																	</div>
-																</td>
-															</tr>
-														</table>
-														<!-- End Content -->
-													</td>
-												</tr>
-											</table>
-											<!-- End Body -->
-										</td>
-									</tr>
-								</table>
-							</td>
-						</tr>
-						<tr>
-							<td align="center" valign="top">
-								<!-- Footer -->
-								<table border="0" cellpadding="10" cellspacing="0" width="600" id="template_footer">
-									<tr>
-										<td valign="top" style="padding:0;border-radius:6px;">
-											<table border="0" cellpadding="10" cellspacing="0" width="100%">
-												<tr>
-													<td colspan="2" valign="middle" id="credit" style="border-radius:6px;border:0;color:#8a8a8a;font-family:'Helvetica Neue',Helvetica,Roboto,Arial,sans-serif;font-size:12px;line-height:150%;text-align:center;padding:24px 0;">
-														<?php echo wp_kses_post( wpautop( wptexturize( apply_filters( 'woocommerce_email_footer_text', get_option( 'woocommerce_email_footer_text' ) ) ) ) ); ?>
-													</td>
-												</tr>
-											</table>
-										</td>
-									</tr>
-								</table>
-								<!-- End Footer -->
-							</td>
-						</tr>
-					</table>
-				</div>
-			</body>
-		</html>
-		<?php
-		$message = ob_get_clean();
-
-		$headers   = array( 'Content-Type: text/html; charset=UTF-8' );
-		$from_email = get_option( 'sorteo_sco_from_email', get_option( 'admin_email' ) );
-		$from_name  = get_option( 'sorteo_sco_from_name', get_bloginfo( 'name' ) );
-		if ( ! empty( $from_email ) && is_email( $from_email ) ) {
+		$headers   = array('Content-Type: text/html; charset=UTF-8');
+		$from_email = get_option('sorteo_sco_from_email', get_option('admin_email'));
+		$from_name  = get_option('sorteo_sco_from_name', get_bloginfo('name'));
+		if (! empty($from_email) && is_email($from_email)) {
 			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
 		}
 
-		$sent = wp_mail( $to, $subject, $message, $headers );
-		if ( $sent ) {
-			$order->update_meta_data( '_sco_pkg_downloads_email_sent', 'yes' );
+		$sent = wp_mail($to, $subject, $message, $headers);
+
+		// Liberar lock
+		delete_transient($lock_key);
+
+		if ($sent) {
+			$order->update_meta_data('_sco_pkg_downloads_email_sent', 'yes');
 			$order->save();
-			$order->add_order_note( sprintf( 'Email de descargas del pedido #%s (ID %d) enviado a %s con %d enlace(s).', $order->get_order_number(), $order->get_id(), $to, is_array( $downloads ) ? count( $downloads ) : 0 ) );
+			$order->add_order_note(sprintf('Email de descargas del pedido #%s (ID %d) enviado a %s con %d enlace(s).', $order->get_order_number(), $order->get_id(), $to, is_array($downloads) ? count($downloads) : 0));
+
+			// Limpiar caché de permisos
+			wp_cache_delete('sco_perms_' . $order_id);
+			wp_cache_delete('sco_perms_count_' . $order_id);
 		} else {
-			$order->add_order_note( sprintf( 'Error al enviar email de descargas del pedido #%s (ID %d) a %s. Revisa configuración de correo.', $order->get_order_number(), $order->get_id(), $to ) );
+			$order->add_order_note(sprintf('Error al enviar email de descargas del pedido #%s (ID %d) a %s. Revisa configuración de correo.', $order->get_order_number(), $order->get_id(), $to));
 		}
 		return $sent;
 	}
@@ -404,105 +602,98 @@ class Sorteo_SCO_Email {
 
 // Enviar email independiente con todas las descargas según estados configurados
 // Función helper para decidir y enviar el email de descargas
-function sorteo_sco_maybe_send_downloads_email( $order_id, $force = false ) {
-    if ( get_option( 'sorteo_sco_email_downloads_enabled', 'yes' ) !== 'yes' ) {
-        $order = wc_get_order( $order_id );
-        if ( $order ) {
-            $order->add_order_note( sprintf( 'Email de descargas desactivado: no se envió para el pedido #%s (ID %d).', $order->get_order_number(), $order->get_id() ) );
-        }
-        return;
-    }
-    $order = wc_get_order( $order_id );
-    if ( ! $order ) return;
-
-	// maybe_send start - debug removed
+function sorteo_sco_maybe_send_downloads_email($order_id, $force = false)
+{
+	if (get_option('sorteo_sco_email_downloads_enabled', 'yes') !== 'yes') {
+		$order = wc_get_order($order_id);
+		if ($order) {
+			$order->add_order_note(sprintf('Email de descargas desactivado: no se envió para el pedido #%s (ID %d).', $order->get_order_number(), $order->get_id()));
+		}
+		return;
+	}
+	$order = wc_get_order($order_id);
+	if (! $order) return;
 
 	// Verificar estado actual del pedido contra los configurados
-	$configured = get_option( 'sorteo_sco_order_statuses', array( 'wc-completed', 'wc-processing' ) );
-	if ( ! is_array( $configured ) ) {
-		$configured = explode( ',', (string) $configured );
+	$configured = get_option('sorteo_sco_order_statuses', array('wc-completed', 'wc-processing'));
+	if (! is_array($configured)) {
+		$configured = explode(',', (string) $configured);
 	}
-	$configured = array_filter( array_map( function( $st ) {
-		$st = trim( (string) $st );
-		return $st ? str_replace( 'wc-', '', strtolower( $st ) ) : '';
-	}, $configured ) );
+	$configured = array_filter(array_map(function ($st) {
+		$st = trim((string) $st);
+		return $st ? str_replace('wc-', '', strtolower($st)) : '';
+	}, $configured));
 
-	$current_status = method_exists( $order, 'get_status' ) ? strtolower( (string) $order->get_status() ) : '';
-	// status check - debug removed
-    if ( ! $force ) {
-        if ( empty( $configured ) || ! in_array( $current_status, $configured, true ) ) {
-            $order->add_order_note( sprintf( 'Estado %s no configurado para enviar descargas: pedido #%s (ID %d).', $current_status, $order->get_order_number(), $order->get_id() ) );
-            return;
-        }
-    }
+	$current_status = method_exists($order, 'get_status') ? strtolower((string) $order->get_status()) : '';
+
+	if (! $force) {
+		if (empty($configured) || ! in_array($current_status, $configured, true)) {
+			$order->add_order_note(sprintf('Estado %s no configurado para enviar descargas: pedido #%s (ID %d).', $current_status, $order->get_order_number(), $order->get_id()));
+			return;
+		}
+	}
 
 	// Requiere al menos un producto de tipo sco_package
 	$has_pkg = false;
-	foreach ( $order->get_items() as $it ) {
+	foreach ($order->get_items() as $it) {
 		$p = $it->get_product();
-		if ( $p && $p->get_type() === 'sco_package' ) { $has_pkg = true; break; }
+		if ($p && $p->get_type() === 'sco_package') {
+			$has_pkg = true;
+			break;
+		}
 	}
-    if ( ! $has_pkg ) {
-        $order->add_order_note( sprintf( 'Pedido sin paquetes: no se envió email de descargas para pedido #%s (ID %d).', $order->get_order_number(), $order->get_id() ) );
-        return;
-    }
+	if (! $has_pkg) {
+		$order->add_order_note(sprintf('Pedido sin paquetes: no se envió email de descargas para pedido #%s (ID %d).', $order->get_order_number(), $order->get_id()));
+		return;
+	}
 
 	// Si tiene paquetes pero aún no se han concedido permisos, posponer el envío salvo force
-	$granted = $order->get_meta( '_sco_pkg_downloads_granted' );
-	// debug removed
+	$granted = $order->get_meta('_sco_pkg_downloads_granted');
 
-	if ( $granted !== 'yes' ) {
-		// Verificar directamente si existen permisos en la tabla WC para este pedido
-		global $wpdb; $perm_table = $wpdb->prefix . 'woocommerce_downloadable_product_permissions';
-		$perm_rows = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$perm_table} WHERE order_id = %d", $order->get_id() ) );
-		$perm_rows = intval( $perm_rows );
-		// debug removed
-		if ( $perm_rows > 0 ) {
+	if ($granted !== 'yes') {
+		// Usar método con caché
+		$perm_rows = Sorteo_SCO_Email::get_permissions_count($order->get_id());
+
+		if ($perm_rows > 0) {
 			// Marcar como concedidos aunque meta no se haya establecido aún
-			$order->update_meta_data( '_sco_pkg_downloads_granted', 'yes' );
+			$order->update_meta_data('_sco_pkg_downloads_granted', 'yes');
 			$order->save();
-			// debug removed
-        } elseif ( ! $force ) {
-            if ( function_exists( 'wp_schedule_single_event' ) ) {
-                $scheduled_ts = time() + 60;
-                wp_schedule_single_event( $scheduled_ts, 'sorteo_sco_send_downloads_email_event', array( (int) $order->get_id() ) );
-                $order->add_order_note( sprintf( 'Descargas pendientes para pedido #%s (ID %d): reintento programado para %s (hook: %s).', $order->get_order_number(), $order->get_id(), date_i18n( 'd/m/Y H:i', $scheduled_ts ), 'sorteo_sco_send_downloads_email_event' ) );
-            }
-            return;
-        } else {
-            // debug removed
-        }
+		} elseif (! $force) {
+			if (function_exists('wp_schedule_single_event')) {
+				$scheduled_ts = time() + 60;
+				wp_schedule_single_event($scheduled_ts, 'sorteo_sco_send_downloads_email_event', array((int) $order->get_id()));
+				$order->add_order_note(sprintf('Descargas pendientes para pedido #%s (ID %d): reintento programado para %s (hook: %s).', $order->get_order_number(), $order->get_id(), date_i18n('d/m/Y H:i', $scheduled_ts), 'sorteo_sco_send_downloads_email_event'));
+			}
+			return;
+		}
 	}
 
-	// debug removed
-
-	Sorteo_SCO_Email::send_order_downloads_email( $order_id );
+	Sorteo_SCO_Email::send_order_downloads_email($order_id);
 }
 
 // Evento programado para reintento
-add_action( 'sorteo_sco_send_downloads_email_event', function( $order_id ) {
-	// Reutiliza la lógica de verificación y estados configurados
-	sorteo_sco_maybe_send_downloads_email( (int) $order_id );
-}, 10, 1 );
-
-// Nota: No usamos woocommerce_order_status_changed para evitar ejecutar antes
-// de que los permisos de descarga sean concedidos. Usamos hooks por estado.
+add_action('sorteo_sco_send_downloads_email_event', function ($order_id) {
+	sorteo_sco_maybe_send_downloads_email((int) $order_id);
+}, 10, 1);
 
 // Disparar en hooks específicos de estados comunes (después de permisos)
-foreach ( array( 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ) as $st ) {
-    add_action( 'woocommerce_order_status_' . $st, function( $order_id ) {
-        sorteo_sco_maybe_send_downloads_email( $order_id );
-    }, 999, 1 );
+foreach (array('pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed') as $st) {
+	add_action('woocommerce_order_status_' . $st, function ($order_id) {
+		sorteo_sco_maybe_send_downloads_email($order_id);
+	}, 999, 1);
 }
 
 // Al cancelar el pedido, permitir reenvío futuro eliminando la marca de enviado
-add_action( 'woocommerce_order_status_cancelled', function( $order_id ) {
-	$order = function_exists('wc_get_order') ? wc_get_order( $order_id ) : null;
-	if ( ! $order ) return;
-	$sent = $order->get_meta( '_sco_pkg_downloads_email_sent' );
-	if ( 'yes' === $sent ) {
-		$order->delete_meta_data( '_sco_pkg_downloads_email_sent' );
+add_action('woocommerce_order_status_cancelled', function ($order_id) {
+	$order = function_exists('wc_get_order') ? wc_get_order($order_id) : null;
+	if (! $order) return;
+	$sent = $order->get_meta('_sco_pkg_downloads_email_sent');
+	if ('yes' === $sent) {
+		$order->delete_meta_data('_sco_pkg_downloads_email_sent');
 		$order->save();
-		// debug removed
+
+		// Limpiar caché de permisos
+		wp_cache_delete('sco_perms_' . $order_id);
+		wp_cache_delete('sco_perms_count_' . $order_id);
 	}
-}, 20 );
+}, 20);
