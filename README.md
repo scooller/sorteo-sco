@@ -1,7 +1,6 @@
-# 🎲 Plugin Sorteo v1.9.14
+# 🎲 Plugin Sorteo v1.9.15
 
 Plugin completo para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas avanzadas y marcos visuales en WooCommerce.
-
 
 <!--
     Se han eliminado secciones duplicadas de "Novedades" — por favor consulte
@@ -10,11 +9,31 @@ Plugin completo para sorteos automáticos, productos sorpresa, avisos personaliz
     Esto mantiene el README concentrado y evita notas de versión dispersas.
 -->
 
-# 🎲 Plugin Sorteo v1.9.14
-
-Plugin para sorteos automáticos, productos sorpresa (paquetes), avisos personalizados, exportación de datos, métricas y gestión de premios en WooCommerce. Este README concentra UN SOLO registro de cambios ordenado por versión (más reciente primero) y evita secciones duplicadas de "Novedades".
-
 ## 📝 Registro de Cambios (Histórico Consolidado)
+
+### v1.9.15 (2025-12-26)
+✅ **Mejoras Críticas en Paquetes (sco_package)**:
+- **Fix duplicados**: Eliminación temprana de productos repetidos con `array_unique()` antes de validación
+- **Validación robusta**: Verifica cantidad suficiente ANTES de `array_slice()`
+- **Mensajes descriptivos**: Errores claros indicando categorías, cantidades necesarias vs disponibles
+- **Logging mejorado**: `error_log()` con información completa para debugging
+- **Verificación final**: Doble chequeo de unicidad después de `shuffle()` en modo aleatorio
+- **Pool ampliado**: Aumentado `posts_per_page` a 500 para mejor selección aleatoria
+- **Excluye recursión**: Paquetes no aparecen como componentes de otros paquetes
+
+✅ **Compatibilidad Multi-Tema**:
+- **Sistema de detección**: `Sorteo_Theme_Compat::is_bootstrap_theme_active()`
+- **AJAX mejorado**: Usa URL nativa de WooCommerce con fragmentos automáticos
+- **Feedback visual**: Botón verde con check temporal al agregar al carrito
+- **Single product**: Selector de cantidad funcional en página de detalle para temas no-Bootstrap
+- **Manejo de errores**: Alertas claras cuando falla el AJAX
+
+✅ **Garantías de Composición**:
+- ✅ Solo productos de categorías configuradas
+- ✅ Cero duplicados en el paquete
+- ✅ Validación correcta de cantidad solicitada
+- ✅ Mensajes de error cuando no hay suficientes productos
+- ✅ Contador de carrito se actualiza automáticamente
 
 ### v1.9.14 (2025-12-08)
 ✅ Notas en retornos tempranos del envío de descargas:
@@ -25,7 +44,7 @@ Plugin para sorteos automáticos, productos sorpresa (paquetes), avisos personal
 
 ✅ Admin: selects múltiples mejorados con SelectWoo/Select2
 - Aplicado a Categorías, Productos especiales y Estados de pedido
-- Búsqueda integrada visible y “x” para quitar elementos seleccionados
+- Búsqueda integrada visible y "x" para quitar elementos seleccionados
 - Inicialización global de `.wc-enhanced-select` con `data-placeholder`
 - Carga de assets `selectWoo`/`select2.css` con fallback si WooCommerce no los registró
 
@@ -595,4 +614,6 @@ Precio: $99 (precio lanzamiento)
 
 ## Soporte
 
-Para dudas o mejoras abre un ticket en el repositorio o contacta al autor. Indica versión instalada y pasos para reproducir problemas.
+Para dudas o mejoras abre un ticket en el repositorio o contacta al autor. 
+Indica **versión instalada** (v1.9.15) y pasos para reproducir problemas. 
+Incluye logs de error si están disponibles (`wp-content/debug.log`).
