@@ -180,7 +180,7 @@ class Sorteo_Theme_Compat
         ?>
             <form class="sco-package-add-to-cart-form" method="post" enctype="multipart/form-data">
                 <div class="quantity-selector">
-                    <div class="col d-flex" style="width: 60%;">
+                    <div class="col d-flex">
                         <label for="sco_qty_<?php echo esc_attr($product_id); ?>" style="width:60%;margin-bottom:5px;">
                             <?php echo esc_html__('Cantidad:', 'sorteo-sco'); ?>
                         </label>
@@ -190,7 +190,7 @@ class Sorteo_Theme_Compat
                             <?php endfor; ?>
                         </select>
                     </div>
-                    <div class="col" style="width: 40%;">
+                    <div class="col">
                         <button type="button"
                             class="button add_to_cart_button sco_add_to_cart_btn wp-block-button__link"
                             data-product_id="<?php echo esc_attr($product_id); ?>"
@@ -324,6 +324,12 @@ class Sorteo_Theme_Compat
                     align-items: end;
                 }
 
+                .quantity-selector label {
+                    white-space: nowrap;
+                    text-overflow: ellipsis;
+                    overflow: hidden;
+                }
+
                 .quantity-selector .col {
                     width: 50%;
                     flex: 1 1 auto !important;
@@ -343,6 +349,18 @@ class Sorteo_Theme_Compat
                 .add_to_cart_button.added {
                     background-color: #28a745;
                     color: white;
+                }
+
+                @media (max-width: 480px) {
+                    .quantity-selector {
+                        flex-direction: column;
+                        align-items: stretch;
+                    }
+
+                    .quantity-selector .col {
+                        width: 100%;
+                        margin-bottom: 10px;
+                    }
                 }
             </style>
     <?php

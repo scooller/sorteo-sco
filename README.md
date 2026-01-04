@@ -1,167 +1,120 @@
-# 🎲 Plugin Sorteo v1.9.15
+# 🎲 Plugin Sorteo v1.9.18
 
-Plugin completo para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas avanzadas y marcos visuales en WooCommerce.
+Plugin completo para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas avanzadas, gestión de stock con HPOS y marcos visuales en WooCommerce.
 
-<!--
-    Se han eliminado secciones duplicadas de "Novedades" — por favor consulte
-    el "Registro de Cambios" consolidado más abajo en este archivo
-    ("## 📝 Registro de Cambios (Histórico Consolidado)").
-    Esto mantiene el README concentrado y evita notas de versión dispersas.
--->
+## 📝 Registro de Cambios
 
-## 📝 Registro de Cambios (Histórico Consolidado)
+Ver archivo [CHANGELOG.md](CHANGELOG.md) para historial completo de versiones y cambios detallados.
 
-### v1.9.15 (2025-12-26)
-✅ **Mejoras Críticas en Paquetes (sco_package)**:
-- **Fix duplicados**: Eliminación temprana de productos repetidos con `array_unique()` antes de validación
-- **Validación robusta**: Verifica cantidad suficiente ANTES de `array_slice()`
-- **Mensajes descriptivos**: Errores claros indicando categorías, cantidades necesarias vs disponibles
-- **Logging mejorado**: `error_log()` con información completa para debugging
-- **Verificación final**: Doble chequeo de unicidad después de `shuffle()` en modo aleatorio
-- **Pool ampliado**: Aumentado `posts_per_page` a 500 para mejor selección aleatoria
-- **Excluye recursión**: Paquetes no aparecen como componentes de otros paquetes
+---
 
-✅ **Compatibilidad Multi-Tema**:
-- **Sistema de detección**: `Sorteo_Theme_Compat::is_bootstrap_theme_active()`
-- **AJAX mejorado**: Usa URL nativa de WooCommerce con fragmentos automáticos
-- **Feedback visual**: Botón verde con check temporal al agregar al carrito
-- **Single product**: Selector de cantidad funcional en página de detalle para temas no-Bootstrap
-- **Manejo de errores**: Alertas claras cuando falla el AJAX
+## 🆕 Novedades v1.9.17
 
-✅ **Garantías de Composición**:
-- ✅ Solo productos de categorías configuradas
-- ✅ Cero duplicados en el paquete
-- ✅ Validación correcta de cantidad solicitada
-- ✅ Mensajes de error cuando no hay suficientes productos
-- ✅ Contador de carrito se actualiza automáticamente
+### ⚙️ Extra WooCommerce - Nueva Página de Configuración
 
-### v1.9.14 (2025-12-08)
-✅ Notas en retornos tempranos del envío de descargas:
-- Email desactivado: agrega nota en pedido
-- Estado no configurado: agrega nota con estado actual
-- Pedido sin paquetes: agrega nota aclaratoria
-- Reintento programado: agrega nota con fecha/hora y hook
+Nueva sección en el menú de administración con herramientas avanzadas para gestión de WooCommerce:
 
-✅ Admin: selects múltiples mejorados con SelectWoo/Select2
-- Aplicado a Categorías, Productos especiales y Estados de pedido
-- Búsqueda integrada visible y "x" para quitar elementos seleccionados
-- Inicialización global de `.wc-enhanced-select` con `data-placeholder`
-- Carga de assets `selectWoo`/`select2.css` con fallback si WooCommerce no los registró
+#### 🔧 Stock y Ordenamiento (NUEVO)
+Pestaña consolidada con configuración de stock y ordenamiento de productos.
 
-### v1.9.13 (2025-12-04)
-✅ Notas en pedido para trazabilidad del email de descargas:
-- Enviado: destinatario y cantidad de enlaces
-- Error: destinatario y sugerencia revisar configuración
-- Sin descargas: aviso y número/ID de pedido
-- Reintento programado: fecha/hora y hook, incluyendo número/ID de pedido
-✅ Reenvío manual agrega nota con resultado y usuario actor.
+**Gestión de Stock**:
+- ✅ **Gestión de Stock Personalizada**: Habilita/deshabilita la gestión de stock por el plugin
+- ✅ **Reserva de Stock**: Previene race conditions en ventas concurrentes
+  - Stock se reserva al hacer checkout (no al pagar)
+  - Se libera automáticamente si el pedido se cancela/falla
+  - Configurable: activar/desactivar según necesidad
+- ✅ **Selección de tipos de producto**:
+  - Simple, Variable, Agrupado, Externo/Afiliado, Paquete SCO
+  - Filtros adicionales: Virtual, Descargable
+- ✅ **Compatibilidad HPOS Total**: Funciona con High-Performance Order Storage y posts tradicional
+- ✅ **Detección automática**: Muestra el estado actual de HPOS en WooCommerce
+- ✅ **Control granular**: Elige exactamente qué productos gestionar
+- ✅ **Hooks optimizados**: Reducción de stock en `processing` y `completed`
+- ✅ **Prevención de duplicados**: Evita reducción doble del mismo pedido
+- ✅ **Notas en pedidos**: Registro automático de ajustes de stock
 
-### v1.9.12 (2025-12-04)
-✅ Fix: evitar duplicación al agregar al carrito cuando el tema Bootstrap no está activo.
-➡ Cambio: eliminado disparo manual de `click.ajax_add_to_cart` en fallback no-Bootstrap; se mantiene `data-quantity` y se delega a WooCommerce.
+**Ordenamiento de Productos**:
+- ✅ **Múltiples opciones de ordenamiento**:
+  - Más Recientes (por fecha de creación)
+  - Orden Aleatorio (ideal para sorteos)
+  - Nombre (A-Z)
+  - Precio (menor a mayor o viceversa)
+  - Popularidad (productos más vendidos)
+  - Calificación (mejor puntuados)
+- ✅ **Dirección configurable**: Ascendente o Descendente
+- ✅ **Productos destacados primero**: Los productos marcados como "Destacado" siempre aparecen primero, sin importar el ordenamiento
 
-### v1.9.11 (2025-11-20)
-✅ Manual resend endpoint + acción rápida y dropdown en pedidos.
-✅ Limpieza de meta `_sco_pkg_downloads_email_sent` en estados refunded/failed/cancelled.
-✅ Logging mínimo (solo errores críticos en permisos y envío de email).
-➡ Visibilidad: Acción rápida solo si hay productos `sco_package`; dropdown siempre disponible (se puede restringir si se solicita).
+#### 📊 Actualización Masiva de Precios
+- ✅ **Por categoría**: Selecciona categoría objetivo para actualizar precios
+- ✅ **Filtros de exclusión**: Excluye productos que pertenezcan a categorías específicas
+- ✅ **Tipos de actualización**:
+  - Porcentaje (%) - Aumentar/reducir por porcentaje
+  - Cantidad fija ($) - Aumentar/reducir cantidad específica
+  - Precio exacto - Establecer precio fijo
+- ✅ **Aplicar a**: Precio regular, precio de oferta, o ambos
+- ✅ **Modo prueba**: Simula cambios antes de aplicar
+- ✅ **Vista previa detallada**: Tabla con productos y precios antes/después
+- ✅ **Procesamiento por lotes**: Optimizado para miles de productos (50 por solicitud)
+- ✅ **Barra de progreso en tiempo real**: Muestra progreso actualizado (ej: 150/2500)
 
-### v1.9.10 (2025-11-20)
-✅ Fix race condition: espera permisos antes de enviar email de descargas.
-✅ Dedupe de enlaces por `product_id|download_id`.
-✅ Reintentos programados si permisos no listos + intento forzado tras crearlos.
-✅ Eliminación de logs de depuración intermedios.
+#### 📈 Monitor de Reservas de Stock (NUEVO)
+- ✅ **Tabla en tiempo real**: Visualiza todos los productos con stock reservado
+- ✅ **Información detallada**:
+  - Nombre del producto y ID
+  - Número de pedido (con enlace a edición)
+  - Cantidad reservada
+  - Tiempo de reserva
+  - Tiempo para expiración (con color indicador)
+- ✅ **Gestión individual**: Liberar reservas una por una
+- ✅ **Gestión en lote**: Liberar todas las reservas de una vez
+- ✅ **Indicadores de estado**: Colores que muestran si la reserva expirará pronto
+- ✅ **Actualización automática**: Carga los datos al abrir el tab
+- ✅ **Botón Actualizar**: Refresca la lista manualmente
 
-### v1.9.9 (2025-11-10)
-✅ Sistema de compatibilidad de tema (`Sorteo_Theme_Compat`).
-✅ Dropdown adaptativo (Bootstrap vs select nativo).
-✅ Fallback CSS automático y funcionamiento standalone sin Bootstrap Theme.
+#### 📈 Métricas de Paquetes (sco_package)
+- ✅ **Dashboard de estadísticas**:
+  - Total de paquetes vendidos
+  - Productos descontados de stock
+  - Emails de componentes enviados
+  - Ingresos totales generados
+- ✅ **Tabla de pedidos**: Últimos 50 pedidos con paquetes
+- ✅ **Información detallada**: Cantidad, componentes, stock reducido, email enviado, fecha
+- ✅ **Enlaces directos**: Acceso rápido a edición de pedidos
 
-### v1.9.8 (2025-11-06)
-✅ Email de pedido completado incluye descargas de productos dentro de paquetes (`sco_package`).
-✅ Creación automática de permisos para componentes descargables.
-✅ Fallback a permisos DB si `get_downloadable_items()` vacío.
-✅ HTML inline simplificado y soporte guest checkout.
-✅ Compatibilidad HPOS en consultas de permisos.
+#### 🎯 Casos de Uso
+**Gestión de Stock**:
+```
+✓ Habilitar gestión de stock
+✓ Habilitar reserva de stock (RECOMENDADO)
+Tipos: [x] Simple [x] Virtual [x] Descargable
+Resultado: El plugin gestionará stock de productos 
+          que sean Simple Y Virtual Y Descargable,
+          reservando el stock al checkout para prevenir
+          ventas concurrentes del mismo producto
+```
 
-### v1.9.6 (2025-11-05)
-✅ Feedback visual post-add-to-cart para paquetes (botón verde temporal).
-✅ Nueva opción para mostrar/ocultar mensaje de reemplazos por reservas.
+**Problema que soluciona la Reserva**:
+```
+SIN RESERVA:
+Usuario A: Agrega Sticker al carrito (stock: 1)
+Usuario B: Compra paquete con ese Sticker → Stock = 0
+Usuario A: Intenta pagar → ERROR: Sin stock
 
-### v1.9.5 (2025-11-04)
-✅ Métricas con gráficos Chart.js (línea días / circular tipos).
-✅ Rangos rápidos 7d/30d/90d y rango personalizado vía AJAX.
-✅ Otorgar premio manual a pedido específico (selector + búsqueda).
+CON RESERVA (RECOMENDADO):
+Usuario A: Agrega Sticker → hace checkout → Stock reservado
+Usuario B: Intenta comprar → "Stock no disponible"
+Usuario A: Completa pago → Stock descontado → ÉXITO ✓
+```
 
-### v1.9.4 (2025-10-28)
-✅ Dropdown de cantidad 1–10 para paquetes con ícono “+” y add via AJAX.
-
-### v1.9.3 (2025-01-25)
-✅ Botón "Agregar al carrito" para paquetes en el loop.
-✅ Fix recursión / memoria; uso simplificado de filtros.
-
-### v1.9.2 (2025-01-25)
-✅ Mensaje de ganador solo en pedidos ganadores (meta verificada + protección contra duplicados).
-
-### v1.9.1 (2025-01-25)
-✅ Productos únicos correctamente manejados en cálculo total de paquetes (sin duplicados).
-
-### v1.9.0 (2025-01-25)
-✅ Personalización de remitente (email y nombre) en sorteos.
-✅ Validaciones y fallbacks automáticos.
-
-### v1.8.9 (2025-01-24)
-✅ Estados dinámicos desde configuración (sin hardcoding) con normalización de prefijos.
-
-### v1.8.5 (2025-10-24)
-✅ Logs extendidos: sorteos ejecutados + envíos de emails (últimos registros, resaltado visual).
-
-### v1.8.4 (2025-10-24)
-✅ Sección de errores del sistema (últimos 50, filtrados y resaltados).
-
-### v1.8.3 (2025-10-24)
-✅ Tab "Premios" con historial completo y métricas actualizadas tras cada sorteo.
-
-### v1.8.2 (2025-10-24)
-✅ Validación excluyente de período (fecha fin inclusiva hasta 23:59:59).
-
-### v1.8.1 (2025-10-24)
-✅ Limpieza de logs de debug (solo errores críticos permanecen).
-
-### v1.8.0 (2025-10-24)
-✅ Rediseño visual ganador (Bootstrap 5.3, mensaje configurable, responsive, permanencia hasta cerrar).
-✅ Separación mensaje visual / email y variables dinámicas.
-
-### v1.7.8 (2025-10-24)
-✅ Sistema de debug completo (activable con WP_DEBUG_LOG) para trazabilidad.
-
-### v1.7.7 (2025-10-24)
-✅ Avisos funcionamiento con guest checkout (sesión + cookies).
-
-### v1.7.6 (2025-10-24)
-✅ Selector de productos especiales solo con stock + búsqueda en tiempo real.
-
-### v1.7.5 (2025-10-24)
-✅ Sistema de email reescrito basado en pedidos (incluye invitados) + alertas reactivadas.
-
-### v1.7.4 (2025-10-24)
-✅ Visualización correcta de cantidad total de productos en paquetes (carrito/pedido).
-
-### v1.7.0 (2025-01-10)
-✅ Nuevo tipo de producto Paquete (Sorteo) con modos Manual y Sorpresa.
-✅ Generación de composición, reducción de stock componentes, metadatos en pedido.
-
-### v1.6.5 (2024-12-15)
-✅ CSV sin filas vacías (validación rigurosa y buffer limpio).
-
-### v1.6.2 (2024-12-10)
-✅ Descarga directa de CSV con nombres timestamp + BOM UTF-8.
-
-### v1.6.1 (2024-12-05)
-✅ Exportación Usuario+Compras detallada (sin agrupación).
-
-### v1.6.0 (2024-12-01)
-✅ Sistema de sorteos inteligente (inmediato vs umbral) + métricas básicas y logging.
+**Actualización de precios**:
+```
+Categoría: Electrónicos
+Excluir: Ofertas, Liquidación
+Tipo: Porcentaje
+Valor: 10
+Resultado: Aumenta 10% solo en productos de Electrónicos 
+          que NO estén en Ofertas ni Liquidación
+```
 
 ---
 

@@ -38,6 +38,222 @@ class Sorteo_SCO_Email
 	}
 
 	/**
+	 * Envía email EXCLUSIVO con descargas de componentes del paquete
+	 * Solo se llama si el paquete padre es virtual+descargable CON archivo
+	 * 
+	 * @param int $order_id ID del pedido
+	 * @param WC_Order_Item_Product $package_item Item del paquete
+	 * @return bool True si se envió correctamente
+	 * @since 1.9.16
+	 */
+	public static function send_package_component_downloads_email($order_id, $package_item)
+	{
+		$order = wc_get_order($order_id);
+		if (!$order) return false;
+
+		// Verificar si ya se envió
+		$sent_key = '_sco_pkg_components_email_sent_' . $package_item->get_id();
+		if ('yes' === $order->get_meta($sent_key)) {
+			return true; // Ya enviado
+		}
+
+		// Obtener descargas de componentes usando función global
+		$downloads = sorteo_sco_get_package_component_downloads($order, $package_item);
+
+		if (empty($downloads)) {
+			$order->add_order_note(sprintf(
+				'Paquete componentes: No hay descargas de componentes para item #%d.',
+				$package_item->get_id()
+			));
+			return false;
+		}
+
+		$to = $order->get_billing_email();
+		$site_name = get_bloginfo('name');
+		$package_product = $package_item->get_product();
+		$package_name = $package_product ? $package_product->get_name() : __('Paquete', 'sorteo-sco');
+
+		$subject = sprintf(
+			__('[%s] Descargas adicionales de tu paquete: %s', 'sorteo-sco'),
+			$site_name,
+			$package_name
+		);
+
+		// Renderizar HTML personalizado
+		$message = self::render_component_downloads_email_html($order, $downloads, $package_name);
+
+		$headers = array('Content-Type: text/html; charset=UTF-8');
+		$from_email = get_option('sorteo_sco_from_email', get_option('admin_email'));
+		$from_name = get_option('sorteo_sco_from_name', get_bloginfo('name'));
+
+		if (!empty($from_email) && is_email($from_email)) {
+			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
+		}
+
+		$sent = wp_mail($to, $subject, $message, $headers);
+
+		if ($sent) {
+			$order->update_meta_data($sent_key, 'yes');
+
+			// Crear lista de productos para la nota
+			$product_list = array();
+			foreach ($downloads as $d) {
+				$product_list[] = sprintf('%s - %s', $d['product_name'], $d['download_name']);
+			}
+
+			$order->add_order_note(sprintf(
+				__('Email de descargas de componentes enviado para paquete "%s" (item #%d) con %d archivo(s):', 'sorteo-sco') . "\n%s",
+				$package_name,
+				$package_item->get_id(),
+				count($downloads),
+				implode("\n", $product_list)
+			));
+			// Guardar orden para persistir meta y nota
+			$order->save();
+		} else {
+			$order->add_order_note(sprintf(
+				'ERROR: No se pudo enviar email de descargas de componentes para paquete "%s" (item #%d).',
+				$package_name,
+				$package_item->get_id()
+			));
+			// Guardar orden para persistir nota de error
+			$order->save();
+			if (function_exists('error_log')) {
+				error_log(sprintf('Sorteo SCO: ERROR al enviar email de componentes para item #%d', $package_item->get_id()));
+			}
+		}
+
+		return $sent;
+	}
+
+	/**
+	 * Renderiza HTML del email de descargas de componentes
+	 * Reutiliza estilos del email principal pero con contenido diferenciado
+	 * 
+	 * @param WC_Order $order Pedido
+	 * @param array $downloads Array de descargas
+	 * @param string $package_name Nombre del paquete
+	 * @return string HTML del email
+	 * @since 1.9.16
+	 */
+	private static function render_component_downloads_email_html($order, $downloads, $package_name)
+	{
+		$colors = self::get_email_colors();
+		$header_img = self::get_header_image();
+		$user_name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
+		if (empty($user_name)) {
+			$user_name = $order->get_billing_email();
+		}
+		$site_name = get_bloginfo('name');
+
+		ob_start();
+?>
+		<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+		<html xmlns="http://www.w3.org/1999/xhtml" <?php language_attributes(); ?>>
+
+		<head>
+			<meta http-equiv="Content-Type" content="text/html; charset=<?php bloginfo('charset'); ?>" />
+			<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+			<title><?php echo esc_html(sprintf(__('[%s] Descargas de tu paquete', 'sorteo-sco'), $site_name)); ?></title>
+		</head>
+
+		<body style="padding:0;margin:0;background-color:<?php echo esc_attr($colors['bg']); ?>;">
+			<div id="wrapper" style="background-color:<?php echo esc_attr($colors['bg']); ?>;padding:70px 0;">
+				<table border="0" cellpadding="0" cellspacing="0" width="100%">
+					<tr>
+						<td align="center">
+							<?php if ($header_img): ?>
+								<div style="margin-bottom:20px;">
+									<img src="<?php echo esc_url($header_img['url']); ?>" alt="<?php echo esc_attr($header_img['alt']); ?>" style="max-height:250px;width:auto;" />
+								</div>
+							<?php endif; ?>
+
+							<table border="0" cellpadding="0" cellspacing="0" width="600" style="background-color:<?php echo esc_attr($colors['body_bg']); ?>;border:1px solid #dedede;border-radius:3px;">
+								<tr>
+									<td>
+										<!-- Header -->
+										<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:<?php echo esc_attr($colors['base']); ?>;border-radius:3px 3px 0 0;">
+											<tr>
+												<td style="padding:36px 48px;">
+													<h1 style="font-size:30px;color:#ffffff;margin:0;">
+														<?php esc_html_e('Descargas de tu paquete', 'sorteo-sco'); ?>
+													</h1>
+												</td>
+											</tr>
+										</table>
+
+										<!-- Body -->
+										<table border="0" cellpadding="20" cellspacing="0" width="100%">
+											<tr>
+												<td style="padding:48px;">
+													<p style="margin:0 0 16px;"><?php echo esc_html(sprintf(__('Hola %s', 'sorteo-sco'), $user_name)); ?>,</p>
+													<p style="margin:0 0 16px;">
+														<?php echo esc_html(sprintf(
+															__('Aquí están los archivos descargables de los productos incluidos en tu paquete "%s" (pedido #%s):', 'sorteo-sco'),
+															$package_name,
+															$order->get_order_number()
+														)); ?>
+													</p>
+
+													<h2 style="color:<?php echo esc_attr($colors['base']); ?>;font-size:18px;margin:18px 0;">
+														<?php esc_html_e('Archivos incluidos', 'sorteo-sco'); ?> (<?php echo count($downloads); ?>)
+													</h2>
+
+													<table cellspacing="0" cellpadding="6" border="1" style="width:100%;border:1px solid #e5e5e5;border-collapse:collapse;">
+														<thead>
+															<tr>
+																<th style="text-align:left;border:1px solid #e5e5e5;padding:12px;background-color:#f8f8f8;">
+																	<?php esc_html_e('Producto', 'sorteo-sco'); ?>
+																</th>
+																<th style="text-align:left;border:1px solid #e5e5e5;padding:12px;background-color:#f8f8f8;">
+																	<?php esc_html_e('Archivo', 'sorteo-sco'); ?>
+																</th>
+																<th style="text-align:left;border:1px solid #e5e5e5;padding:12px;background-color:#f8f8f8;">
+																	<?php esc_html_e('Descarga', 'sorteo-sco'); ?>
+																</th>
+															</tr>
+														</thead>
+														<tbody>
+															<?php foreach ($downloads as $d): ?>
+																<tr>
+																	<td style="text-align:left;border:1px solid #e5e5e5;padding:12px;">
+																		<?php echo esc_html($d['product_name']); ?>
+																	</td>
+																	<td style="text-align:left;border:1px solid #e5e5e5;padding:12px;">
+																		<?php echo esc_html($d['download_name']); ?>
+																	</td>
+																	<td style="text-align:left;border:1px solid #e5e5e5;padding:12px;">
+																		<a href="<?php echo esc_url($d['download_url']); ?>" style="color:<?php echo esc_attr($colors['base']); ?>;">
+																			<?php esc_html_e('Descargar', 'sorteo-sco'); ?> ⬇
+																		</a>
+																	</td>
+																</tr>
+															<?php endforeach; ?>
+														</tbody>
+													</table>
+
+													<p style="margin:24px 0 0;font-size:12px;color:#666;">
+														<strong><?php esc_html_e('Nota:', 'sorteo-sco'); ?></strong>
+														<?php esc_html_e('Este email contiene las descargas de los productos dentro de tu paquete. El archivo del paquete principal se envía en el email estándar de WooCommerce.', 'sorteo-sco'); ?>
+													</p>
+												</td>
+											</tr>
+										</table>
+									</td>
+								</tr>
+							</table>
+						</td>
+					</tr>
+				</table>
+			</div>
+		</body>
+
+		</html>
+	<?php
+		return ob_get_clean();
+	}
+
+	/**
 	 * Obtiene un icono compatible según disponibilidad
 	 * 
 	 * @param string $type Tipo de icono (cart, download, check)
@@ -283,7 +499,7 @@ class Sorteo_SCO_Email
 
 		// Template por defecto
 		ob_start();
-?>
+	?>
 		<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 		<html xmlns="http://www.w3.org/1999/xhtml" <?php language_attributes(); ?>>
 
@@ -538,10 +754,20 @@ class Sorteo_SCO_Email
 			}
 		}
 
-		if (empty($downloads)) {
+		// Filtrar paquetes que tienen email personalizado
+		$filtered_downloads = array();
+		foreach ($downloads as $d) {
+			$product = wc_get_product($d['product_id'] ?? 0);
+			// Solo incluir si NO es paquete con email personalizado
+			if (!$product || !sorteo_sco_package_needs_custom_downloads_email($product)) {
+				$filtered_downloads[] = $d;
+			}
+		}
+
+		if (empty($filtered_downloads)) {
 			delete_transient($lock_key);
-			$order->add_order_note(sprintf('Descargas no disponibles: no se envió email de descargas para el pedido #%s (ID %d).', $order->get_order_number(), $order->get_id()));
-			return false;
+			$order->add_order_note('Email descargas: Todas las descargas se envían por emails personalizados.');
+			return true; // No es error, solo que todo va por email personalizado
 		}
 
 		// Si el pedido tiene paquetes pero aún no hay permisos, reintentar vía cron en breve
@@ -567,8 +793,8 @@ class Sorteo_SCO_Email
 		$site_name = get_bloginfo('name');
 		$subject = sprintf(__('[%s] Tus descargas del pedido #%s', 'sorteo-sco'), $site_name, $order->get_order_number());
 
-		// Renderizar HTML usando sistema mejorado
-		$message = self::render_email_html($order, $downloads);
+		// Renderizar HTML usando sistema mejorado con descargas filtradas
+		$message = self::render_email_html($order, $filtered_downloads);
 
 		// Permitir filtrado del HTML final
 		$message = apply_filters('sorteo_sco_downloads_email_html', $message, $order, $downloads);
@@ -588,7 +814,7 @@ class Sorteo_SCO_Email
 		if ($sent) {
 			$order->update_meta_data('_sco_pkg_downloads_email_sent', 'yes');
 			$order->save();
-			$order->add_order_note(sprintf('Email de descargas del pedido #%s (ID %d) enviado a %s con %d enlace(s).', $order->get_order_number(), $order->get_id(), $to, is_array($downloads) ? count($downloads) : 0));
+			$order->add_order_note(sprintf('Email de descargas del pedido #%s (ID %d) enviado a %s con %d enlace(s).', $order->get_order_number(), $order->get_id(), $to, is_array($filtered_downloads) ? count($filtered_downloads) : 0));
 
 			// Limpiar caché de permisos
 			wp_cache_delete('sco_perms_' . $order_id);
@@ -696,4 +922,108 @@ add_action('woocommerce_order_status_cancelled', function ($order_id) {
 		wp_cache_delete('sco_perms_' . $order_id);
 		wp_cache_delete('sco_perms_count_' . $order_id);
 	}
+
+	// Limpiar también metas de email de componentes
+	foreach ($order->get_items() as $item_id => $item) {
+		$sent_key = '_sco_pkg_components_email_sent_' . $item_id;
+		if ($order->get_meta($sent_key)) {
+			$order->delete_meta_data($sent_key);
+		}
+	}
+	$order->save();
 }, 20);
+
+/**
+ * Verifica si un paquete necesita email personalizado de descargas de componentes
+ * Solo si el paquete es virtual + descargable + tiene archivo descargable propio
+ * 
+ * @param WC_Product $product Producto paquete
+ * @return bool True si necesita email personalizado
+ * @since 1.9.16
+ */
+function sorteo_sco_package_needs_custom_downloads_email($product)
+{
+	if (!$product || $product->get_type() !== 'sco_package') {
+		return false;
+	}
+
+	// El email debe enviarse si el paquete es virtual Y tiene componentes descargables
+	// NO depende de si el paquete padre tiene archivos propios
+	return $product->is_virtual();
+}
+
+/**
+ * Obtiene descargas de productos componentes del paquete
+ * EXCLUYE archivos del paquete padre
+ * 
+ * @param WC_Order $order Pedido
+ * @param WC_Order_Item_Product $item Item del paquete
+ * @return array Array de descargas con [download_url, download_name, product_name]
+ * @since 1.9.16
+ */
+function sorteo_sco_get_package_component_downloads($order, $item)
+{
+	$downloads = array();
+	$seen_keys = array(); // Dedupe por product_id|download_id
+
+	// Leer composición
+	$pkg = $item->get_meta('_sco_package', true);
+	if (empty($pkg) || empty($pkg['components'])) {
+		return $downloads;
+	}
+
+	// Obtener permisos SOLO de componentes
+	global $wpdb;
+	$perm_table = $wpdb->prefix . 'woocommerce_downloadable_product_permissions';
+
+	foreach ($pkg['components'] as $comp) {
+		$comp_product_id = (int)$comp['product_id'];
+
+		// Query permisos de este componente específico
+		$rows = $wpdb->get_results($wpdb->prepare(
+			"SELECT product_id, download_id, order_key, user_email 
+			 FROM {$perm_table} 
+			 WHERE order_id = %d AND product_id = %d",
+			$order->get_id(),
+			$comp_product_id
+		), ARRAY_A);
+
+		if (empty($rows)) continue;
+
+		foreach ($rows as $r) {
+			$pid = (int)$r['product_id'];
+			$download_id = $r['download_id'];
+			$key = $pid . '|' . $download_id;
+
+			if (isset($seen_keys[$key])) continue;
+			$seen_keys[$key] = true;
+
+			$prod = wc_get_product($pid);
+			$file_name = '';
+			$product_name = '';
+
+			if ($prod) {
+				$product_name = $prod->get_name();
+				$files = $prod->get_downloads();
+				if (isset($files[$download_id])) {
+					$file_name = $files[$download_id]->get_name();
+				}
+			}
+
+			$url = add_query_arg(array(
+				'download_file' => $pid,
+				'order' => $r['order_key'],
+				'email' => rawurlencode($r['user_email']),
+				'key' => $download_id,
+			), home_url('/'));
+
+			$downloads[] = array(
+				'download_url' => $url,
+				'download_name' => $file_name ?: __('Descarga', 'sorteo-sco'),
+				'product_name' => $product_name,
+			);
+		}
+	}
+
+	return $downloads;
+}
