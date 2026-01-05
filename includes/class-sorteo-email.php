@@ -38,49 +38,83 @@ class Sorteo_SCO_Email
 	}
 
 	/**
-	 * Envía email EXCLUSIVO con descargas de componentes del paquete
-	 * Solo se llama si el paquete padre es virtual+descargable CON archivo
+	 * Envía email EXCLUSIVO con descargas de componentes de paquetes
+	 * Procesa TODOS los paquetes del pedido en un solo email
 	 * 
 	 * @param int $order_id ID del pedido
-	 * @param WC_Order_Item_Product $package_item Item del paquete
+	 * @param WC_Order_Item_Product $package_item Item del paquete (opcional, si no se pasa procesa todos)
 	 * @return bool True si se envió correctamente
 	 * @since 1.9.16
 	 */
-	public static function send_package_component_downloads_email($order_id, $package_item)
+	public static function send_package_component_downloads_email($order_id, $package_item = null)
 	{
 		$order = wc_get_order($order_id);
 		if (!$order) return false;
 
-		// Verificar si ya se envió
-		$sent_key = '_sco_pkg_components_email_sent_' . $package_item->get_id();
-		if ('yes' === $order->get_meta($sent_key)) {
-			return true; // Ya enviado
+		// Si se proporciona un item específico, procesarlo solo a él (backward compatibility)
+		// Si no, procesar TODOS los paquetes del pedido
+		$items_to_process = array();
+
+		if ($package_item) {
+			// Modo legacy: procesar solo un paquete
+			$items_to_process[] = $package_item;
+		} else {
+			// Modo nuevo: procesar todos los paquetes
+			foreach ($order->get_items() as $item_id => $item) {
+				$product = $item->get_product();
+				if ($product && $product->get_type() === 'sco_package') {
+					if (
+						function_exists('sorteo_sco_package_needs_custom_downloads_email') &&
+						sorteo_sco_package_needs_custom_downloads_email($product)
+					) {
+						$items_to_process[] = $item;
+					}
+				}
+			}
 		}
 
-		// Obtener descargas de componentes usando función global
-		$downloads = sorteo_sco_get_package_component_downloads($order, $package_item);
+		if (empty($items_to_process)) {
+			return false;
+		}
 
-		if (empty($downloads)) {
-			$order->add_order_note(sprintf(
-				'Paquete componentes: No hay descargas de componentes para item #%d.',
-				$package_item->get_id()
-			));
+		// Recolectar todas las descargas de todos los paquetes
+		$all_downloads = array();
+		$package_names = array();
+
+		foreach ($items_to_process as $item) {
+			$downloads = sorteo_sco_get_package_component_downloads($order, $item);
+			if (!empty($downloads)) {
+				$all_downloads = array_merge($all_downloads, $downloads);
+				$pkg_product = $item->get_product();
+				if ($pkg_product) {
+					$package_names[] = $pkg_product->get_name();
+				}
+			}
+		}
+
+		if (empty($all_downloads)) {
+			$order->add_order_note(__('No hay descargas de componentes para enviar.', 'sorteo-sco'));
 			return false;
 		}
 
 		$to = $order->get_billing_email();
 		$site_name = get_bloginfo('name');
-		$package_product = $package_item->get_product();
-		$package_name = $package_product ? $package_product->get_name() : __('Paquete', 'sorteo-sco');
+
+		// Si hay múltiples paquetes, usar nombre genérico
+		if (count($package_names) > 1) {
+			$package_display = sprintf(__('%d paquetes', 'sorteo-sco'), count($package_names));
+		} else {
+			$package_display = $package_names[0];
+		}
 
 		$subject = sprintf(
-			__('[%s] Descargas adicionales de tu paquete: %s', 'sorteo-sco'),
+			__('[%s] Descargas de tu pedido #%s', 'sorteo-sco'),
 			$site_name,
-			$package_name
+			$order->get_order_number()
 		);
 
-		// Renderizar HTML personalizado
-		$message = self::render_component_downloads_email_html($order, $downloads, $package_name);
+		// Renderizar HTML personalizado con todas las descargas
+		$message = self::render_component_downloads_email_html($order, $all_downloads, $package_display);
 
 		$headers = array('Content-Type: text/html; charset=UTF-8');
 		$from_email = get_option('sorteo_sco_from_email', get_option('admin_email'));
@@ -93,33 +127,27 @@ class Sorteo_SCO_Email
 		$sent = wp_mail($to, $subject, $message, $headers);
 
 		if ($sent) {
-			$order->update_meta_data($sent_key, 'yes');
-
 			// Crear lista de productos para la nota
 			$product_list = array();
-			foreach ($downloads as $d) {
+			foreach ($all_downloads as $d) {
 				$product_list[] = sprintf('%s - %s', $d['product_name'], $d['download_name']);
 			}
 
 			$order->add_order_note(sprintf(
-				__('Email de descargas de componentes enviado para paquete "%s" (item #%d) con %d archivo(s):', 'sorteo-sco') . "\n%s",
-				$package_name,
-				$package_item->get_id(),
-				count($downloads),
+				__('Email de descargas de componentes enviado con %d archivo(s) de %s:', 'sorteo-sco') . "\n%s",
+				count($all_downloads),
+				$package_display,
 				implode("\n", $product_list)
 			));
-			// Guardar orden para persistir meta y nota
+
+			// Guardar orden para persistir nota
 			$order->save();
 		} else {
-			$order->add_order_note(sprintf(
-				'ERROR: No se pudo enviar email de descargas de componentes para paquete "%s" (item #%d).',
-				$package_name,
-				$package_item->get_id()
-			));
-			// Guardar orden para persistir nota de error
+			$order->add_order_note(__('ERROR: No se pudo enviar email de descargas de componentes.', 'sorteo-sco'));
 			$order->save();
+
 			if (function_exists('error_log')) {
-				error_log(sprintf('Sorteo SCO: ERROR al enviar email de componentes para item #%d', $package_item->get_id()));
+				error_log(sprintf('Sorteo SCO: ERROR al enviar email de componentes para pedido #%d', $order_id));
 			}
 		}
 

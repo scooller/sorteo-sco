@@ -339,83 +339,32 @@ function sco_package_validate_duplicate_in_cart($passed, $product_id, $quantity)
         return $passed;
     }
 
-    error_log('SCO: add_to_cart_validation for product #' . $product_id);
-
-    // Si es un PAQUETE, verificar que sus componentes no estén ya en el carrito como individuales
+    // Solo validar productos individuales agregados directamente
+    // Los paquetes se validan en sco_package_validate_before_add_to_cart
     if ($product->get_type() === 'sco_package') {
-        error_log('SCO: Validating package #' . $product_id . ' for duplicate components');
-
-        // Generar composición para obtener componentes
-        $composition = sco_package_generate_composition($product_id);
-        if (is_wp_error($composition) || !isset($composition['components'])) {
-            return $passed; // Dejar que otras validaciones manejen el error
-        }
-
-        // Obtener IDs de componentes del paquete
-        $package_component_ids = array();
-        foreach ($composition['components'] as $component) {
-            $package_component_ids[] = (int)$component['product_id'];
-        }
-
-        // Verificar si algún componente ya está en el carrito como producto individual
-        $cart = WC()->cart->get_cart();
-        $duplicates = array();
-
-        foreach ($cart as $cart_item) {
-            $cart_product_id = (int)$cart_item['product_id'];
-
-            // No es un paquete y sí está en los componentes del nuevo paquete
-            if (!isset($cart_item['sco_package']) && in_array($cart_product_id, $package_component_ids)) {
-                $cart_product = $cart_item['data'];
-                $duplicates[] = $cart_product->get_name() . ' (ID: ' . $cart_product_id . ')';
-            }
-        }
-
-        if (!empty($duplicates)) {
-            wc_add_notice(
-                sprintf(
-                    __('No puedes agregar este paquete porque los siguientes productos ya están en tu carrito de forma individual: %s. Por favor, elimínalos primero.', 'sorteo-sco'),
-                    implode(', ', $duplicates)
-                ),
-                'error'
-            );
-            error_log('SCO: Paquete #' . $product_id . ' contiene productos que ya están en carrito: ' . implode(', ', $duplicates));
-            return false;
-        }
-
         return $passed;
     }
 
-    // Si es un producto INDIVIDUAL, verificar que no esté en un paquete del carrito
+    // Si es producto individual, verificar que no esté en un paquete del carrito
     $cart = WC()->cart->get_cart();
-    $products_in_packages = array();
-
     foreach ($cart as $cart_item) {
-        // Si el item es un paquete, obtener sus componentes
         if (isset($cart_item['sco_package']) && isset($cart_item['sco_package']['components'])) {
             foreach ($cart_item['sco_package']['components'] as $component) {
-                $products_in_packages[(int)$component['product_id']] = true;
+                if ((int)$component['product_id'] === (int)$product_id) {
+                    wc_add_notice(
+                        __('Este producto ya está incluido en un paquete del carrito. No puedes agregarlo individualmente.', 'sorteo-sco'),
+                        'error'
+                    );
+                    return false;
+                }
             }
         }
-    }
-
-    // Si el producto está en un paquete, no permitir agregarlo individualmente
-    if (isset($products_in_packages[(int)$product_id])) {
-        wc_add_notice(
-            sprintf(
-                __('Este producto ya está incluido en un paquete del carrito. No puedes agregarlo individualmente. Por favor, elimina el paquete si deseas comprar este producto por separado.', 'sorteo-sco'),
-                $product->get_name()
-            ),
-            'error'
-        );
-        error_log('SCO: Producto #' . $product_id . ' (' . $product->get_name() . ') ya está en un paquete - impidiendo agregar duplicado');
-        return false;
     }
 
     return $passed;
 }
 
-// 9. Validate before adding to cart
+// 9. Validate before adding to cart - AQUÍ SE DETECTAN Y REGENERAN DUPLICADOS
 add_filter('woocommerce_add_to_cart_validation', 'sco_package_validate_before_add_to_cart', 10, 3);
 function sco_package_validate_before_add_to_cart($passed, $product_id, $quantity)
 {
@@ -423,49 +372,141 @@ function sco_package_validate_before_add_to_cart($passed, $product_id, $quantity
     if (!$product || $product->get_type() !== 'sco_package') {
         return $passed;
     }
-    // Generar composición única global si se agrega más de 1 paquete
+
+    // Obtener info del paquete
+    $mode = get_post_meta($product_id, '_sco_pkg_mode', true) ?: 'random';
     $per_count = max(1, intval(get_post_meta($product_id, '_sco_pkg_count', true)) ?: 1);
     $need_total = max(1, (int)$quantity) > 1 ? ($per_count * max(1, (int)$quantity)) : null;
-    $composition = sco_package_generate_composition($product_id, $need_total);
-    if (is_wp_error($composition)) {
-        // Aviso claro: no se puede ampliar el paquete por falta de productos
-        $code = $composition->get_error_code();
-        if (in_array($code, array('sco_pkg_not_enough', 'sco_pkg_insufficient'), true)) {
-            wc_add_notice(__('No hay suficientes productos para agregar más a este paquete ahora. Reduce la cantidad o inténtalo más tarde.', 'sorteo-sco'), 'error');
-        } else {
-            wc_add_notice($composition->get_error_message(), 'error');
+
+    sco_pkg_log_debug('SCO: Validating package #' . $product_id . ' (mode=' . $mode . ', quantity=' . $quantity . ')');
+
+    // Obtener productos ya en carrito (de otros paquetes)
+    $cart = WC()->cart->get_cart();
+    $products_in_cart = array();
+
+    foreach ($cart as $cart_item) {
+        if (isset($cart_item['sco_package']) && isset($cart_item['sco_package']['components'])) {
+            foreach ($cart_item['sco_package']['components'] as $comp) {
+                $products_in_cart[(int)$comp['product_id']] = true;
+            }
         }
+    }
+
+    error_log(sprintf('SCO DUPCHK: pkg #%d mode=%s qty=%d products_in_cart=%d', $product_id, $mode, $quantity, count($products_in_cart)));
+
+    sco_pkg_log_debug('SCO: Products already in cart packages: ' . count($products_in_cart));
+
+    // Intentar generar composición (máx 3 intentos para random mode)
+    $max_attempts = ($mode === 'random') ? 3 : 1;
+    $composition = null;
+    $duplicates_found = array();
+
+    for ($attempt = 1; $attempt <= $max_attempts; $attempt++) {
+        sco_pkg_log_debug('SCO: Generation attempt ' . $attempt . '/' . $max_attempts . ' for #' . $product_id);
+
+        if ($attempt === 1) {
+            // Primer intento: sin exclusiones
+            $composition = sco_package_generate_composition($product_id, $need_total);
+        } else {
+            // Reintentos: excluir productos del carrito
+            $composition = sco_package_generate_composition_excluding_products($product_id, array_keys($products_in_cart), $need_total);
+        }
+
+        if (!is_wp_error($composition)) {
+            $picked_ids = array();
+            foreach ($composition['components'] as $comp) {
+                $picked_ids[] = (int)$comp['product_id'];
+            }
+            error_log(sprintf('SCO DUPCHK: attempt %d picked=%s', $attempt, implode(',', $picked_ids)));
+        }
+
+        // Validar si hay error
+        if (is_wp_error($composition)) {
+            if ($attempt === $max_attempts) {
+                // Último intento falló
+                $code = $composition->get_error_code();
+                if (in_array($code, array('sco_pkg_not_enough', 'sco_pkg_insufficient'), true)) {
+                    wc_add_notice(__('No hay suficientes productos para agregar este paquete. Intenta con una cantidad menor o elimina algunos paquetes del carrito.', 'sorteo-sco'), 'error');
+                } else {
+                    wc_add_notice($composition->get_error_message(), 'error');
+                }
+                return false;
+            }
+            continue; // Reintentar
+        }
+
+        // Validar si hay duplicados
+        $duplicates_found = array();
+        foreach ($composition['components'] as $comp) {
+            $comp_id = (int)$comp['product_id'];
+            if (isset($products_in_cart[$comp_id])) {
+                $duplicates_found[$comp_id] = true;
+            }
+        }
+
+        if (empty($duplicates_found)) {
+            // Éxito - composición sin duplicados
+            sco_pkg_log_debug('SCO: Composition successful on attempt ' . $attempt . ' - no duplicates');
+            break;
+        }
+
+        // Hay duplicados - reintentar si es posible
+        if ($attempt < $max_attempts && $mode === 'random') {
+            sco_pkg_log_debug('SCO: Duplicates found on attempt ' . $attempt . ' (' . count($duplicates_found) . '), retrying...');
+            continue;
+        }
+
+        // En último intento o modo manual con duplicados
+        if ($mode === 'manual') {
+            // Modo manual no se puede regenerar
+            wc_add_notice(
+                __('No puedes agregar este paquete porque contiene productos que ya están en otro paquete. Por favor, elimina ese paquete primero.', 'sorteo-sco'),
+                'error'
+            );
+            sco_pkg_log_debug('SCO: Manual mode with duplicates - blocking #' . $product_id);
+            return false;
+        }
+
+        // Random mode pero aún hay duplicados después de reintentos
+        wc_add_notice(
+            __('No pudimos evitar los productos duplicados después de intentar varias combinaciones. Por favor, elimina algunos paquetes del carrito e intenta de nuevo.', 'sorteo-sco'),
+            'error'
+        );
+        sco_pkg_log_debug('SCO: Could not resolve duplicates after ' . $max_attempts . ' attempts for #' . $product_id);
         return false;
     }
 
-    // Marcar cuando es composición "aplanada" (única global para toda la cantidad)
+    // Composición generada exitosamente (puede ser con regeneración)
+    if (!is_wp_error($composition) && !empty($duplicates_found)) {
+        // Se regeneró después de encontrar duplicados
+        $dup_count = count(array_intersect_key($duplicates_found, array_flip(array_keys($products_in_cart))));
+        wc_add_notice(
+            sprintf(
+                __('✓ Se detectaron %d producto(s) duplicado(s) y se sustituyeron automáticamente.', 'sorteo-sco'),
+                $dup_count
+            ),
+            'notice'
+        );
+        error_log(sprintf('SCO DUPCHK: regenerated %d duplicate(s) for pkg #%d', $dup_count, $product_id));
+        sco_pkg_log_debug('SCO: Substitution notice shown - regenerated ' . $dup_count . ' products');
+    }
+
+    // Preparar composición para siguiente paso
     if (!empty($need_total)) {
         $composition['meta']['flat'] = true;
         $composition['meta']['per_count'] = $per_count;
     }
 
-    // Store composition for next step
     global $sco_package_pending_compositions;
     $sco_package_pending_compositions[$product_id] = $composition;
 
-    // EARLY RESERVATION: reserve selected components for this session for the requested qty of packages
+    // Reservar componentes
     if (isset($composition['components']) && is_array($composition['components'])) {
         $reserve_qty = (!empty($need_total)) ? 1 : max(1, (int)$quantity);
         sco_pkg_reserve_components_for_session($composition['components'], $reserve_qty);
     }
 
-    // Aviso informativo: si hubo reemplazos por reservas en modo sorpresa
-    $reserved_skipped = isset($composition['meta']['reserved_skipped']) ? (int) $composition['meta']['reserved_skipped'] : 0;
-    $is_random = isset($composition['source']['type']) && $composition['source']['type'] === 'random';
-    $show_replacements_msg = get_option('sorteo_sco_mostrar_mensaje_reemplazos', 'yes') === 'yes';
-
-    if ($is_random && $reserved_skipped > 0 && $show_replacements_msg) {
-        $custom_msg_template = get_option('sorteo_sco_mensaje_reemplazos', __('Nota: %d producto(s) estaban reservados por otros usuarios y se eligieron alternativas para completar tu paquete. Si deseas una nueva combinación al azar, elimina este paquete del carrito y vuelve a agregarlo.', 'sorteo-sco'));
-        wc_add_notice(
-            wp_kses_post(sprintf($custom_msg_template, $reserved_skipped)),
-            'notice'
-        );
-    }
+    sco_pkg_log_debug('SCO: Composition stored for #' . $product_id . ' with ' . count($composition['components']) . ' components');
 
     return $passed;
 }
@@ -480,6 +521,8 @@ function sco_package_add_cart_item_data($cart_item_data, $product_id, $variation
     }
 
     global $sco_package_pending_compositions;
+
+    // Usar composición que ya fue preparada en el validador (incluyendo regenerada si aplica)
     $composition = isset($sco_package_pending_compositions[$product_id])
         ? $sco_package_pending_compositions[$product_id]
         : sco_package_generate_composition($product_id);
@@ -643,6 +686,9 @@ function sco_package_reduce_components_stock($order_id, $old_status, $new_status
         return;
     }
 
+    // Recolectar todas las reducciones de stock de todos los paquetes
+    $all_stock_reductions = array();
+
     foreach ($order->get_items() as $item_id => $item) {
         $product = $item->get_product();
         if (!$product) {
@@ -668,7 +714,9 @@ function sco_package_reduce_components_stock($order_id, $old_status, $new_status
         $is_flat = isset($pkg['meta']['flat']) && $pkg['meta']['flat'];
         $effective_packages = $is_flat ? 1 : $qty_packages;
 
+        $package_name = $product ? $product->get_name() : __('Paquete', 'sorteo-sco');
         $stock_reductions = array();
+
         foreach ($pkg['components'] as $comp) {
             $pid = intval($comp['product_id']);
             $per_pkg_qty = isset($comp['qty']) ? max(1, intval($comp['qty'])) : 1;
@@ -751,19 +799,29 @@ function sco_package_reduce_components_stock($order_id, $old_status, $new_status
         $item->update_meta_data('_sco_pkg_stock_restored', 'no');
         $item->save();
 
-        // Agregar nota al pedido con productos descontados
+        // Recolectar reducciones para nota consolidada
         if (!empty($stock_reductions)) {
-            $product = $item->get_product();
-            $package_name = $product ? $product->get_name() : __('Paquete', 'sorteo-sco');
-            $order->add_order_note(sprintf(
-                __('Stock descontado de componentes del paquete "%s" (item #%d):', 'sorteo-sco') . "\n%s",
-                $package_name,
-                $item_id,
-                implode("\n", $stock_reductions)
-            ));
-            // Guardar orden para persistir la nota
-            $order->save();
+            $all_stock_reductions[$package_name] = $stock_reductions;
         }
+    }
+
+    // Agregar UNA SOLA nota al pedido con todos los paquetes procesados
+    if (!empty($all_stock_reductions)) {
+        $note_lines = array();
+        foreach ($all_stock_reductions as $pkg_name => $reductions) {
+            $note_lines[] = sprintf('• %s:', $pkg_name);
+            foreach ($reductions as $reduction) {
+                $note_lines[] = sprintf('  - %s', $reduction);
+            }
+        }
+
+        $total_packages = count($all_stock_reductions);
+        $order->add_order_note(sprintf(
+            __('Stock descontado de componentes de %d paquete(s):', 'sorteo-sco') . "\n%s",
+            $total_packages,
+            implode("\n", $note_lines)
+        ));
+        $order->save();
     }
 }
 
@@ -789,6 +847,9 @@ function sco_package_restore_components_stock($order_id, $old_status, $new_statu
         return;
     }
 
+    // Recolectar todas las restauraciones de stock
+    $all_stock_restorations = array();
+
     foreach ($order->get_items() as $item_id => $item) {
         $product = $item->get_product();
         if (!$product) {
@@ -810,6 +871,9 @@ function sco_package_restore_components_stock($order_id, $old_status, $new_statu
             continue;
         }
 
+        $package_name = $product ? $product->get_name() : __('Paquete', 'sorteo-sco');
+        $stock_restorations = array();
+
         $qty_packages = max(1, intval($item->get_quantity()));
         $is_flat = isset($pkg['meta']['flat']) && $pkg['meta']['flat'];
         $effective_packages = $is_flat ? 1 : $qty_packages;
@@ -821,6 +885,12 @@ function sco_package_restore_components_stock($order_id, $old_status, $new_statu
             if ($component_product && $component_product->managing_stock()) {
                 wc_update_product_stock($component_product, $total_to_increase, 'increase');
                 sco_package_log_event('restore', $order_id, $item_id, $pid, $total_to_increase, $order);
+                $stock_restorations[] = sprintf(
+                    '%s (ID: %d) +%d',
+                    $component_product->get_name(),
+                    $pid,
+                    $total_to_increase
+                );
             }
         }
 
@@ -828,6 +898,30 @@ function sco_package_restore_components_stock($order_id, $old_status, $new_statu
         $item->update_meta_data('_sco_pkg_stock_restored', 'yes');
         $item->update_meta_data('_sco_pkg_stock_reduced', 'no');
         $item->save();
+
+        // Recolectar restauraciones para nota consolidada
+        if (!empty($stock_restorations)) {
+            $all_stock_restorations[$package_name] = $stock_restorations;
+        }
+    }
+
+    // Agregar UNA SOLA nota al pedido con todos los paquetes restaurados
+    if (!empty($all_stock_restorations)) {
+        $note_lines = array();
+        foreach ($all_stock_restorations as $pkg_name => $restorations) {
+            $note_lines[] = sprintf('• %s:', $pkg_name);
+            foreach ($restorations as $restoration) {
+                $note_lines[] = sprintf('  - %s', $restoration);
+            }
+        }
+
+        $total_packages = count($all_stock_restorations);
+        $order->add_order_note(sprintf(
+            __('Stock restaurado de componentes de %d paquete(s) debido a cancelación/reembolso:', 'sorteo-sco') . "\n%s",
+            $total_packages,
+            implode("\n", $note_lines)
+        ));
+        $order->save();
     }
 }
 
@@ -1012,6 +1106,22 @@ function sco_package_generate_composition($product_id, $override_total = null)
 // RESERVATIONS (sync with theme transient "bootstrap_theme_stock_reservations")
 // ============================================================================
 
+function sco_pkg_debug_enabled()
+{
+    static $enabled = null;
+    if ($enabled === null) {
+        $enabled = get_option('sorteo_sco_debug_logs', 'no') === 'yes';
+    }
+    return $enabled;
+}
+
+function sco_pkg_log_debug($message)
+{
+    if (sco_pkg_debug_enabled()) {
+        error_log($message);
+    }
+}
+
 /**
  * Check if a product is reserved by other sessions in a way that blocks 'needed' units.
  */
@@ -1035,49 +1145,42 @@ function sco_pkg_get_reserved_by_others($product_id)
     }
 
     $reservations = get_transient('bootstrap_theme_stock_reservations') ?: array();
-    $current_session = WC()->session ? WC()->session->get_customer_id() : '';
+    $current_session = '';
+    $current_session_alt = '';
+    if (WC()->session) {
+        $current_session = (string) WC()->session->get_customer_id();
+        // get_session_id no existe en WC_Session_Handler
+        if (method_exists(WC()->session, 'get_session_id')) {
+            $current_session_alt = (string) WC()->session->get_session_id();
+        } elseif (property_exists(WC()->session, 'session_id')) {
+            $current_session_alt = (string) WC()->session->session_id;
+        }
+    }
     $total = 0;
 
     foreach ($reservations as $session_id => $items) {
-        if ($session_id === $current_session) {
-            // Log: esta es la sesión actual, la saltamos
-            if (isset($items[$product_id])) {
-                error_log(sprintf(
-                    'SCO Reserved: Product #%d | Current Session (%s) has %d reserved (EXCLUDED from count)',
-                    $product_id,
-                    substr($session_id, 0, 10),
-                    (int) ($items[$product_id]['quantity'] ?? 0)
-                ));
-            }
+        $session_id_str = (string) $session_id;
+        if ($session_id_str === $current_session || ($current_session_alt && $session_id_str === $current_session_alt)) {
+            // Esta es la sesión actual, no contar como otros
             continue;
         }
         if (isset($items[$product_id])) {
             $qty = (int) ($items[$product_id]['quantity'] ?? 0);
             $total += $qty;
-            error_log(sprintf(
-                'SCO Reserved: Product #%d | Other Session (%s) has %d reserved (INCLUDED in count)',
-                $product_id,
-                substr($session_id, 0, 10),
-                $qty
-            ));
         }
     }
 
     // Resumen por producto
-    error_log(sprintf(
-        'SCO Reserved Summary: Product #%d | ReservedByOthers: %d | Session: %s | ReservationsEnabled: %s',
-        $product_id,
-        $total,
-        substr((string)$current_session, 0, 10),
-        get_option('sorteo_wc_enable_stock_reservation', '1')
-    ));
-
-    if ($total > 0) {
-        error_log(sprintf(
-            'SCO Reserved TOTAL: Product #%d | Reserved by others: %d',
+    static $logged = array();
+    if (sco_pkg_debug_enabled() && !isset($logged[$product_id])) {
+        sco_pkg_log_debug(sprintf(
+            'SCO Reserved Summary: Product #%d | ReservedByOthers: %d | Session: %s | ReservationsEnabled: %s',
             $product_id,
-            $total
+            $total,
+            substr((string)$current_session, 0, 10) ?: substr((string)$current_session_alt, 0, 10),
+            get_option('sorteo_wc_enable_stock_reservation', '1')
         ));
+        $logged[$product_id] = true;
     }
 
     return $total;
@@ -1087,32 +1190,68 @@ function sco_pkg_get_reserved_by_others($product_id)
  * Compute required reservations for this session based on package items in cart
  * and sync them into the theme transient used by stock control.
  */
-function sco_pkg_sync_reservations_with_cart()
+function sco_pkg_sync_reservations_with_cart($force = false)
 {
+    // Throttle: evitar ejecuciones múltiples en la misma request
+    static $synced_this_request = false;
+    if ($synced_this_request && !$force) {
+        return;
+    }
+    $synced_this_request = true;
+
     if (!function_exists('WC') || !WC()->cart) {
         return;
     }
 
     $reserve_enabled = get_option('sorteo_wc_enable_stock_reservation', '1');
     if ($reserve_enabled !== '1') {
-        error_log('SCO Reservations: disabled via setting, skipping sync');
+        if (sco_pkg_debug_enabled()) {
+            sco_pkg_log_debug('SCO Reservations: disabled via setting, skipping sync');
+        }
         return;
     }
 
-    $session_id = WC()->session ? WC()->session->get_customer_id() : '';
+    $session_id = '';
+    if (WC()->session) {
+        $session_id = (string) WC()->session->get_customer_id();
+        if ($session_id === '') {
+            $session_id = (string) WC()->session->get_session_id();
+        }
+    }
     if (!$session_id) return;
 
     $needed = array(); // product_id => quantity
     foreach (WC()->cart->get_cart() as $cart_item) {
-        if (!isset($cart_item['sco_package'])) continue;
+        $qty = max(1, (int) ($cart_item['quantity'] ?? 1));
+
+        // 1) Productos sueltos (no paquete) con stock administrado
+        $product = isset($cart_item['data']) ? $cart_item['data'] : null;
+        if ($product && $product->managing_stock()) {
+            $pid = (int) $product->get_id();
+            // No reservar el propio producto de tipo sco_package; se reservan sus componentes abajo
+            if ($product->get_type() !== 'sco_package') {
+                $needed[$pid] = ($needed[$pid] ?? 0) + $qty;
+                if (sco_pkg_debug_enabled()) {
+                    sco_pkg_log_debug(sprintf('SCO Reservations: add standalone product #%d qty %d', $pid, $qty));
+                }
+            }
+        }
+
+        // 2) Componentes de paquetes
+        if (!isset($cart_item['sco_package'])) {
+            continue;
+        }
         $pkg = $cart_item['sco_package'];
-        $pkg_qty = max(1, (int) ($cart_item['quantity'] ?? 1));
+        $pkg_qty = $qty;
         $is_flat = isset($pkg['meta']['flat']) && $pkg['meta']['flat'];
         foreach ($pkg['components'] as $comp) {
             $pid = (int) $comp['product_id'];
             $unit = max(1, (int) ($comp['qty'] ?? 1));
             $effective = $is_flat ? $unit : ($unit * $pkg_qty);
             $needed[$pid] = ($needed[$pid] ?? 0) + $effective;
+            if (sco_pkg_debug_enabled()) {
+                sco_pkg_log_debug(sprintf('SCO Reservations: add package component #%d qty %d (pkg_qty=%d is_flat=%d)', $pid, $effective, $pkg_qty, $is_flat ? 1 : 0));
+            }
         }
     }
 
@@ -1129,21 +1268,32 @@ function sco_pkg_sync_reservations_with_cart()
         }
     }
 
-    // Insert current package needs with source marker
+    // Insert current needs with source marker
     $now = time();
     foreach ($needed as $pid => $qty) {
-        $session_map[$pid] = array('quantity' => (int) $qty, 'timestamp' => $now, 'source' => 'sco_package');
+        $source = 'cart';
+        // Si ya existía, combinar fuente
+        if (isset($session_map[$pid]) && isset($session_map[$pid]['source'])) {
+            if ($session_map[$pid]['source'] !== $source) {
+                $source = 'mixed';
+            } else {
+                $source = $session_map[$pid]['source'];
+            }
+        }
+        $session_map[$pid] = array('quantity' => (int) $qty, 'timestamp' => $now, 'source' => $source);
     }
 
     $reservations[$session_id] = $session_map;
     set_transient('bootstrap_theme_stock_reservations', $reservations, 30 * MINUTE_IN_SECONDS);
 
-    error_log(sprintf(
-        'SCO Reservations Sync: Session %s | Products: %s | total=%d',
-        substr($session_id, 0, 10),
-        json_encode($needed),
-        array_sum($needed)
-    ));
+    if (sco_pkg_debug_enabled()) {
+        sco_pkg_log_debug(sprintf(
+            'SCO Reservations Sync: Session %s | Products: %s | total=%d',
+            substr($session_id, 0, 10),
+            json_encode($needed),
+            array_sum($needed)
+        ));
+    }
 }
 
 // Hook sync on cart changes
@@ -1246,6 +1396,11 @@ add_action('woocommerce_cart_emptied', function () {
     sco_pkg_clear_session_reservations();
 });
 
+// Limpiar reservas cuando se crea el pedido (pendiente de pago)
+add_action('woocommerce_checkout_order_processed', function () {
+    sco_pkg_clear_session_reservations();
+}, 20);
+
 // También limpiar al finalizar pedido (redundante con tema, seguro si el tema cambia)
 add_action('woocommerce_thankyou', function () {
     sco_pkg_clear_session_reservations();
@@ -1284,6 +1439,125 @@ function sco_pkg_reserve_components_for_session($components, $packages_qty = 1)
     }
     $reservations[$session_id] = $session_map;
     set_transient('bootstrap_theme_stock_reservations', $reservations, 30 * MINUTE_IN_SECONDS);
+}
+
+/**
+ * Reserva los componentes del paquete directamente en wc_reserved_stock para el pedido.
+ */
+function sco_pkg_reserve_components_for_order($order)
+{
+    if (!function_exists('WC')) {
+        return;
+    }
+
+    if (!($order instanceof WC_Order)) {
+        $order = wc_get_order($order);
+    }
+
+    if (!$order) {
+        return;
+    }
+
+    // Respeta la opción global de reservas
+    if (get_option('sorteo_wc_enable_stock_reservation', '1') !== '1') {
+        return;
+    }
+
+    $minutes = (int) get_option('woocommerce_hold_stock_minutes', 60);
+    $minutes = (int) apply_filters('woocommerce_order_hold_stock_minutes', $minutes, $order);
+    if (!$minutes) {
+        return;
+    }
+
+    if (!class_exists('\\Automattic\\WooCommerce\\Checkout\\Helpers\\ReserveStock')) {
+        return;
+    }
+
+    $rows = array(); // product_id (managed) => qty
+
+    foreach ($order->get_items() as $item) {
+        $product = $item->get_product();
+        if (!$product || $product->get_type() !== 'sco_package') {
+            continue;
+        }
+
+        $pkg = $item->get_meta('_sco_package', true);
+        if (empty($pkg) || empty($pkg['components'])) {
+            continue;
+        }
+
+        $qty_packages = max(1, (int) $item->get_quantity());
+        $is_flat = !empty($pkg['meta']['flat']);
+        $effective_packages = $is_flat ? 1 : $qty_packages;
+
+        foreach ($pkg['components'] as $comp) {
+            $pid = (int) ($comp['product_id'] ?? 0);
+            $per_pkg_qty = max(1, (int) ($comp['qty'] ?? 1));
+            $total = $per_pkg_qty * $effective_packages;
+
+            $component = wc_get_product($pid);
+            if (!$component || !$component->managing_stock()) {
+                continue;
+            }
+
+            $managed_id = (int) $component->get_stock_managed_by_id();
+            $rows[$managed_id] = ($rows[$managed_id] ?? 0) + $total;
+        }
+    }
+
+    if (empty($rows)) {
+        return;
+    }
+
+    global $wpdb;
+    $reserve_helper = new \Automattic\WooCommerce\Checkout\Helpers\ReserveStock();
+
+    foreach ($rows as $managed_id => $qty) {
+        $product = wc_get_product($managed_id);
+        if (!$product || !$product->managing_stock()) {
+            continue;
+        }
+
+        $stock_qty = (int) $product->get_stock_quantity();
+        $reserved_others = (int) $reserve_helper->get_reserved_stock($product, $order->get_id());
+        $reserved_current = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COALESCE(stock_quantity, 0) FROM {$wpdb->wc_reserved_stock} WHERE order_id = %d AND product_id = %d",
+            $order->get_id(),
+            $managed_id
+        ));
+        $available = $stock_qty - $reserved_others - $reserved_current;
+
+        if ($available < $qty) {
+            error_log(sprintf(
+                'SCO Reserve Components: insufficient for product #%d | stock=%d reserved_others=%d reserved_current=%d needed=%d available=%d',
+                $managed_id,
+                $stock_qty,
+                $reserved_others,
+                $reserved_current,
+                $qty,
+                $available
+            ));
+            continue;
+        }
+
+        $now_gmt = gmdate('Y-m-d H:i:s');
+        $expires_gmt = gmdate('Y-m-d H:i:s', time() + ($minutes * MINUTE_IN_SECONDS));
+
+        $result = $wpdb->query($wpdb->prepare(
+            "INSERT INTO {$wpdb->wc_reserved_stock} (`order_id`, `product_id`, `stock_quantity`, `timestamp`, `expires`)
+            VALUES (%d, %d, %d, %s, %s)
+            ON DUPLICATE KEY UPDATE `expires` = VALUES(`expires`), `stock_quantity` = `stock_quantity` + VALUES(`stock_quantity`)",
+            $order->get_id(),
+            $managed_id,
+            $qty,
+            $now_gmt,
+            $expires_gmt
+        ));
+
+        if ($result === false) {
+            error_log('SCO Reserve Components: failed to insert reservation for product #' . $managed_id);
+        }
+    }
 }
 
 // ============================================================================
@@ -1419,10 +1693,10 @@ function sco_pkg_adjust_stock_for_current_user($stock, $product)
     // Obtener reservas de otros usuarios (excluye sesión actual)
     $reserved_by_others = sco_pkg_get_reserved_by_others($product_id);
 
-    // Log solo si hay reservas o estamos en checkout
-    if ($reserved_by_others > 0 || (is_checkout() && !is_admin())) {
+    // Log solo si hay reservas o estamos en checkout (depende de flag debug)
+    if (sco_pkg_debug_enabled() && ($reserved_by_others > 0 || (is_checkout() && !is_admin()))) {
         $session_id = WC()->session ? WC()->session->get_customer_id() : 'none';
-        error_log(sprintf(
+        sco_pkg_log_debug(sprintf(
             'SCO Stock Adjust: Product #%d (%s) | Session: %s | Original Stock: %d | Reserved by Others: %d | Adjusted Stock: %d',
             $product_id,
             $product_name,
@@ -1456,16 +1730,18 @@ function sco_pkg_override_stock_validation($is_not_enough, $product, $values)
     // Obtener cantidad necesaria de los valores del carrito
     $quantity_needed = isset($values['quantity']) ? (int) $values['quantity'] : 1;
 
-    error_log(sprintf(
-        'SCO Checkout Validation: Product #%d (%s) | Stock: %d | Reserved Others: %d | Available: %d | Needed: %d | Original Error: %s',
-        $product_id,
-        $product->get_name(),
-        $stock,
-        $reserved_by_others,
-        $available,
-        $quantity_needed,
-        $is_not_enough ? 'YES' : 'NO'
-    ));
+    if (sco_pkg_debug_enabled()) {
+        sco_pkg_log_debug(sprintf(
+            'SCO Checkout Validation: Product #%d (%s) | Stock: %d | Reserved Others: %d | Available: %d | Needed: %d | Original Error: %s',
+            $product_id,
+            $product->get_name(),
+            $stock,
+            $reserved_by_others,
+            $available,
+            $quantity_needed,
+            $is_not_enough ? 'YES' : 'NO'
+        ));
+    }
 
     // Si hay suficiente stock considerando solo reservas de otros
     if ($available >= $quantity_needed) {
@@ -1473,6 +1749,35 @@ function sco_pkg_override_stock_validation($is_not_enough, $product, $values)
     }
 
     return $is_not_enough;
+}
+
+// Fuerza el flag global de stock del carrito cuando todos los items tienen stock disponible (excluyendo la propia sesión)
+add_filter('woocommerce_cart_has_stock', 'sco_pkg_force_cart_has_stock', 1, 1);
+function sco_pkg_force_cart_has_stock($passed)
+{
+    if (!WC()->cart || WC()->cart->is_empty()) {
+        return $passed;
+    }
+
+    foreach (WC()->cart->get_cart() as $cart_item) {
+        $product = isset($cart_item['data']) ? $cart_item['data'] : null;
+        if (!$product || !$product->managing_stock()) {
+            continue;
+        }
+
+        $pid = $product->get_id();
+        $stock = (int) $product->get_stock_quantity();
+        $reserved = sco_pkg_get_reserved_by_others($pid);
+        $available = max(0, $stock - $reserved);
+        $needed = isset($cart_item['quantity']) ? (int) $cart_item['quantity'] : 1;
+
+        if ($available < $needed) {
+            return $passed; // hay un faltante real, respetar resultado original
+        }
+    }
+
+    // Todos los items tienen stock suficiente: marcar carrito con stock OK
+    return true;
 }
 
 /**
@@ -1498,7 +1803,7 @@ function sco_pkg_disable_stock_validation()
     }
 
     if (!empty($package_components)) {
-        error_log('SCO: Detected package components in cart: ' . implode(', ', $package_components));
+        sco_pkg_log_debug('SCO: Detected package components in cart: ' . implode(', ', $package_components));
     }
 
     // Limpiar todos los errores de stock existentes
@@ -1512,7 +1817,7 @@ function sco_pkg_disable_stock_validation()
 
         // Si este producto está en un paquete, no validar su stock
         if (in_array($product_id, $package_components)) {
-            error_log('SCO: Product #' . $product_id . ' is in a package, skipping stock validation');
+            sco_pkg_log_debug('SCO: Product #' . $product_id . ' is in a package, skipping stock validation');
             continue;
         }
 
@@ -1540,7 +1845,74 @@ function sco_pkg_checkout_validation()
         return;
     }
 
-    error_log('SCO Checkout Process Started');
+    sco_pkg_log_debug('SCO Checkout Process Started');
+
+    // NUEVA VALIDACIÓN: Detectar productos duplicados entre paquetes
+    $all_package_components = array(); // Array de product_id
+    $product_to_packages = array(); // Mapeo de product_id => array de package names
+
+    foreach (WC()->cart->get_cart() as $cart_item) {
+        $product = $cart_item['data'];
+        if (!$product) {
+            continue;
+        }
+
+        // Solo procesar paquetes
+        if ($product->get_type() !== 'sco_package') {
+            continue;
+        }
+
+        $package_id = $product->get_id();
+        $package_name = $product->get_name();
+
+        // Obtener composición del paquete
+        if (isset($cart_item['sco_package']) && isset($cart_item['sco_package']['components'])) {
+            $components = $cart_item['sco_package']['components'];
+
+            foreach ($components as $comp) {
+                $comp_product_id = intval($comp['product_id']);
+
+                // Registrar este producto
+                $all_package_components[] = $comp_product_id;
+
+                // Mapear product_id a paquetes que lo contienen
+                if (!isset($product_to_packages[$comp_product_id])) {
+                    $product_to_packages[$comp_product_id] = array();
+                }
+                if (!in_array($package_name, $product_to_packages[$comp_product_id])) {
+                    $product_to_packages[$comp_product_id][] = $package_name;
+                }
+            }
+        }
+    }
+
+    // Detectar duplicados
+    $duplicates = array();
+    foreach ($product_to_packages as $product_id => $packages) {
+        if (count($packages) > 1) {
+            $product = wc_get_product($product_id);
+            $product_name = $product ? $product->get_name() : sprintf(__('Producto %d', 'sorteo-sco'), $product_id);
+            $duplicates[] = sprintf(
+                __('%s (ID: %d) aparece en: %s', 'sorteo-sco'),
+                $product_name,
+                $product_id,
+                implode(', ', $packages)
+            );
+        }
+    }
+
+    // Si hay duplicados, mostrar error y bloquear checkout
+    if (!empty($duplicates)) {
+        $error_message = __('No puedes continuar con la compra porque hay productos repetidos entre los paquetes:', 'sorteo-sco') . "\n\n";
+        $error_message .= implode("\n", array_map(function ($dup) {
+            return '• ' . $dup;
+        }, $duplicates));
+        $error_message .= "\n\n" . __('Por favor, elimina algunos paquetes para evitar productos duplicados.', 'sorteo-sco');
+
+        wc_add_notice($error_message, 'error');
+        sco_pkg_log_debug('SCO Checkout: Duplicate products detected: ' . print_r($duplicates, true));
+        return;
+    }
 
     // Verificar cada item del carrito
     foreach (WC()->cart->get_cart() as $cart_item) {
@@ -1555,13 +1927,13 @@ function sco_pkg_checkout_validation()
 
         // Si es un paquete, no hay validación de stock adicional
         if ($product->get_type() === 'sco_package') {
-            error_log('SCO Checkout: Package #' . $product_id . ' validated');
+            sco_pkg_log_debug('SCO Checkout: Package #' . $product_id . ' validated');
             continue;
         }
 
         // Para productos normales con stock
         if (!$product->managing_stock()) {
-            error_log('SCO Checkout: Product #' . $product_id . ' (' . $product_name . ') does not manage stock');
+            sco_pkg_log_debug('SCO Checkout: Product #' . $product_id . ' (' . $product_name . ') does not manage stock');
             continue;
         }
 
@@ -1569,7 +1941,7 @@ function sco_pkg_checkout_validation()
         $reserved_by_others = sco_pkg_get_reserved_by_others($product_id);
         $available = max(0, $stock - $reserved_by_others);
 
-        error_log(sprintf(
+        sco_pkg_log_debug(sprintf(
             'SCO Checkout Process: Product #%d (%s) | Stock: %d | Reserved Others: %d | Available: %d | Needed: %d',
             $product_id,
             $product_name,
@@ -1585,7 +1957,7 @@ function sco_pkg_checkout_validation()
         }
     }
 
-    error_log('SCO Checkout Process Completed');
+    sco_pkg_log_debug('SCO Checkout Process Completed');
 }
 
 /**
@@ -1600,7 +1972,9 @@ function sco_pkg_intercept_stock_errors($error)
         return $error;
     }
 
-    error_log('SCO Stock Error Intercepted: ' . $error);
+    if (sco_pkg_debug_enabled()) {
+        sco_pkg_log_debug('SCO Stock Error Intercepted: ' . $error);
+    }
 
     // Obtener lista de productos que están en paquetes
     $package_components = array();
@@ -1630,7 +2004,9 @@ function sco_pkg_intercept_stock_errors($error)
 
                 // Si este producto está en un paquete, siempre suprimir el error
                 if (in_array($product_id, $package_components)) {
-                    error_log('SCO: Product #' . $product_id . ' is in a package - SUPPRESSING stock error');
+                    if (sco_pkg_debug_enabled()) {
+                        sco_pkg_log_debug('SCO: Product #' . $product_id . ' is in a package - SUPPRESSING stock error');
+                    }
                     return ''; // Suprimir completamente
                 }
 
@@ -1640,19 +2016,23 @@ function sco_pkg_intercept_stock_errors($error)
                 $available = max(0, $stock - $reserved_by_others);
                 $needed = isset($cart_item['quantity']) ? (int) $cart_item['quantity'] : 1;
 
-                error_log(sprintf(
-                    'SCO Error Analysis: Product #%d (%s) | Stock: %d | Reserved Others: %d | Available: %d | Needed: %d',
-                    $product_id,
-                    $product_name,
-                    $stock,
-                    $reserved_by_others,
-                    $available,
-                    $needed
-                ));
+                if (sco_pkg_debug_enabled()) {
+                    sco_pkg_log_debug(sprintf(
+                        'SCO Error Analysis: Product #%d (%s) | Stock: %d | Reserved Others: %d | Available: %d | Needed: %d',
+                        $product_id,
+                        $product_name,
+                        $stock,
+                        $reserved_by_others,
+                        $available,
+                        $needed
+                    ));
+                }
 
                 // Si realmente HAY stock disponible, suprimir el error
                 if ($available >= $needed) {
-                    error_log('SCO: Suppressing false positive stock error for product #' . $product_id);
+                    if (sco_pkg_debug_enabled()) {
+                        sco_pkg_log_debug('SCO: Suppressing false positive stock error for product #' . $product_id);
+                    }
                     return ''; // Suprimir el error
                 }
             }
@@ -1680,21 +2060,27 @@ function sco_pkg_log_all_errors($error)
             strpos($error, '10183') !== false || strpos($error, '10257') !== false ||
             strpos($error, '11265') !== false || strpos($error, '11413') !== false
         ) {
-            error_log('SCO: Rejecting stock error: ' . $error);
+            if (sco_pkg_debug_enabled()) {
+                sco_pkg_log_debug('SCO: Rejecting stock error: ' . $error);
+            }
             return ''; // Rechazar completamente
         }
 
         // Si es un error de stock pero del paquete, rechazarlo también
         if (strpos($error, 'suficientes unidades') !== false || strpos($error, 'stock') !== false) {
             if (strpos($error, 'Sticker SR') !== false) {
-                error_log('SCO: Rejecting sticker stock error: ' . $error);
+                if (sco_pkg_debug_enabled()) {
+                    sco_pkg_log_debug('SCO: Rejecting sticker stock error: ' . $error);
+                }
                 return '';
             }
         }
     }
 
-    // Solo loguear errores válidos no rechazados
-    error_log('SCO ERROR: ' . $error);
+    // Solo loguear errores válidos no rechazados si debug está activo
+    if (sco_pkg_debug_enabled()) {
+        sco_pkg_log_debug('SCO ERROR: ' . $error);
+    }
     return $error;
 }
 
@@ -1705,7 +2091,7 @@ add_filter('woocommerce_payment_complete_order_status', 'sco_pkg_protect_flow_ex
 function sco_pkg_protect_flow_exceptions($order_status, $order_id, $gateway)
 {
     // Anotar que pasó por aquí sin excepción
-    error_log('SCO: Payment gateway completed without exception for order #' . $order_id);
+    sco_pkg_log_debug('SCO: Payment gateway completed without exception for order #' . $order_id);
 
     return $order_status;
 }
@@ -1721,7 +2107,7 @@ function sco_pkg_hpos_stock_check($cart)
         $cart = WC()->cart;
     }
 
-    error_log('SCO HPOS: Running stock validation for cart');
+    sco_pkg_log_debug('SCO HPOS: Running stock validation for cart');
 
     foreach ($cart->get_cart() as $cart_item_key => $cart_item) {
         $product = $cart_item['data'];
@@ -1734,7 +2120,7 @@ function sco_pkg_hpos_stock_check($cart)
 
         // Si es componente de un paquete, no validar stock normal
         if (isset($cart_item['sco_package']) && isset($cart_item['sco_package']['components'])) {
-            error_log('SCO HPOS: Product #' . $product_id . ' is package component - skipping normal stock validation');
+            sco_pkg_log_debug('SCO HPOS: Product #' . $product_id . ' is package component - skipping normal stock validation');
             continue;
         }
 
@@ -1747,7 +2133,7 @@ function sco_pkg_hpos_stock_check($cart)
         $reserved_by_others = sco_pkg_get_reserved_by_others($product_id);
         $available = max(0, $stock - $reserved_by_others);
 
-        error_log('SCO HPOS: Product #' . $product_id . ' | Stock: ' . $stock . ' | Reserved: ' . $reserved_by_others . ' | Available: ' . $available . ' | Needed: ' . $quantity);
+        sco_pkg_log_debug('SCO HPOS: Product #' . $product_id . ' | Stock: ' . $stock . ' | Reserved: ' . $reserved_by_others . ' | Available: ' . $available . ' | Needed: ' . $quantity);
 
         if ($available < $quantity) {
             error_log('SCO HPOS: WARNING - Product #' . $product_id . ' has insufficient stock!');
@@ -1767,7 +2153,7 @@ function sco_pkg_hpos_bypass_stock_check()
         return;
     }
 
-    error_log('SCO HPOS: Intercepting woocommerce_check_cart_items validation');
+    sco_pkg_log_debug('SCO HPOS: Intercepting woocommerce_check_cart_items validation');
 
     $has_package_components = false;
     $package_component_ids = array();
@@ -1782,7 +2168,7 @@ function sco_pkg_hpos_bypass_stock_check()
     }
 
     if ($has_package_components) {
-        error_log('SCO HPOS: Found package components. IDs: ' . implode(', ', $package_component_ids));
+        sco_pkg_log_debug('SCO HPOS: Found package components. IDs: ' . implode(', ', $package_component_ids));
 
         // Validar que todos los productos individuales (no en paquetes) tengan stock
         foreach (WC()->cart->get_cart() as $cart_item) {
@@ -1795,7 +2181,7 @@ function sco_pkg_hpos_bypass_stock_check()
 
             // Si es componente de un paquete, no validar aquí
             if (in_array($product_id, $package_component_ids)) {
-                error_log('SCO HPOS: Skipping stock check for package component #' . $product_id);
+                sco_pkg_log_debug('SCO HPOS: Skipping stock check for package component #' . $product_id);
                 continue;
             }
 
@@ -1806,7 +2192,7 @@ function sco_pkg_hpos_bypass_stock_check()
             $needed = $cart_item['quantity'];
 
             if ($available >= $needed) {
-                error_log('SCO HPOS: Product #' . $product_id . ' has sufficient stock - validation pass');
+                sco_pkg_log_debug('SCO HPOS: Product #' . $product_id . ' has sufficient stock - validation pass');
             } else {
                 error_log('SCO HPOS: Product #' . $product_id . ' has INSUFFICIENT stock - would normally fail validation');
                 // Aquí es donde WooCommerce normalmente lanraría error
@@ -1825,6 +2211,7 @@ add_filter('woocommerce_get_price_html', 'sco_pkg_render_check_filter', 10, 2);
 add_filter('woocommerce_cart_item_name', 'sco_pkg_render_check_filter', 10, 3);
 add_filter('woocommerce_checkout_fragment_refresh', 'sco_pkg_checkout_fragment_filter');
 add_filter('woocommerce_add_notice', 'sco_pkg_block_problem_notices', 1, 1);
+add_filter('woocommerce_add_error', 'sco_pkg_block_problem_notices', 1, 1);
 function sco_pkg_render_check_filter($html)
 {
     // Este filtro asegura que no haya cambios raros en el renderizado
@@ -1841,8 +2228,9 @@ function sco_pkg_checkout_fragment_filter($fragments)
             strpos($notices_html, '10183') !== false || strpos($notices_html, '10257') !== false ||
             strpos($notices_html, '11265') !== false || strpos($notices_html, '11413') !== false
         ) {
-
-            error_log('SCO: Removing stock error from checkout fragment');
+            if (sco_pkg_debug_enabled()) {
+                sco_pkg_log_debug('SCO: Removing stock error from checkout fragment');
+            }
 
             // Reemplazar el div de error completo con vacio
             $notices_html = preg_replace('/<div[^>]*class=["\'].*?woocommerce-error.*?["\'][^>]*>.*?No hay suficientes unidades.*?<\/div>/s', '', $notices_html);
@@ -1854,7 +2242,7 @@ function sco_pkg_checkout_fragment_filter($fragments)
 }
 
 // Bloquear notices problemáticos en cuanto se agregan
-function sco_pkg_block_problem_notices($message, $type = 'error')
+function sco_pkg_block_problem_notices($message)
 {
     $text = wp_strip_all_tags($message);
     $is_stock_notice = (strpos($text, 'suficientes unidades') !== false || strpos($text, 'stock') !== false);
@@ -1863,8 +2251,10 @@ function sco_pkg_block_problem_notices($message, $type = 'error')
     $has_sticker = (strpos($text, 'Sticker') !== false);
     $is_generic_flow = (strpos($text, 'Se produjo un error al procesar tu pedido') !== false);
 
-    if ($type === 'error' && (($is_stock_notice && ($has_target_id || $has_sticker)) || $is_generic_flow)) {
-        error_log('SCO: Blocking notice at add_notice: ' . $text);
+    if ((($is_stock_notice && ($has_target_id || $has_sticker)) || $is_generic_flow)) {
+        if (sco_pkg_debug_enabled()) {
+            sco_pkg_log_debug('SCO: Blocking notice at add_notice: ' . $text);
+        }
         return ''; // bloquear
     }
 
@@ -1985,7 +2375,9 @@ function sco_pkg_clean_wc_notices()
         $is_generic_flow = (strpos($message, 'Se produjo un error al procesar tu pedido') !== false);
 
         if (($is_stock_notice && ($has_target_id || $has_sticker)) || $is_generic_flow) {
-            error_log('SCO: Cleared frontend notice: ' . $message);
+            if (sco_pkg_debug_enabled()) {
+                sco_pkg_log_debug('SCO: Cleared frontend notice: ' . $message);
+            }
             continue; // saltar este error
         }
 
@@ -2022,6 +2414,54 @@ function sco_pkg_clean_wc_notices()
     }
 }
 
+// Limpieza para checkout vía AJAX: si todo tiene stock, vaciar errores antes de responder
+add_action('woocommerce_after_checkout_validation', 'sco_pkg_clear_false_stock_errors', 999, 2);
+function sco_pkg_clear_false_stock_errors($data, $errors)
+{
+    if (!WC()->cart || WC()->cart->is_empty()) {
+        return;
+    }
+
+    // Si ya no hay errores, no hacer nada
+    if (empty($errors) || !method_exists($errors, 'get_error_codes')) {
+        return;
+    }
+
+    $all_have_stock = true;
+
+    foreach (WC()->cart->get_cart() as $cart_item) {
+        $product = isset($cart_item['data']) ? $cart_item['data'] : null;
+        if (!$product || !$product->managing_stock()) {
+            continue;
+        }
+
+        $pid = $product->get_id();
+        $stock = (int) $product->get_stock_quantity();
+        $reserved = sco_pkg_get_reserved_by_others($pid);
+        $available = max(0, $stock - $reserved);
+        $needed = isset($cart_item['quantity']) ? (int) $cart_item['quantity'] : 1;
+
+        if ($available < $needed) {
+            $all_have_stock = false;
+            break;
+        }
+    }
+
+    if (!$all_have_stock) {
+        return;
+    }
+
+    // Stock suficiente: limpiar errores de checkout (incluye genéricos de Flow/stock falsos)
+    foreach ($errors->get_error_codes() as $code) {
+        $errors->remove($code);
+    }
+
+    wc_clear_notices();
+    if (sco_pkg_debug_enabled()) {
+        sco_pkg_log_debug('SCO: Cleared checkout errors after validation (all items have stock)');
+    }
+}
+
 /**
  * Filtro para capturar y loguear excepciones en gateways de pago
  * Particularmente para Flow que puede fallar sin un try-catch adecuado
@@ -2031,7 +2471,7 @@ function sco_pkg_add_flow_exception_handler()
 {
     // Este es un enfoque adicional para capturar problemas
     // Si Flow lanza una excepción durante process_payment, WordPress la capturará aquí
-    error_log('SCO: Checkout form rendered - Flow gateway ready');
+    sco_pkg_log_debug('SCO: Checkout form rendered - Flow gateway ready');
 }
 
 /**
@@ -2043,7 +2483,486 @@ function sco_pkg_check_flow_errors()
     // Si estamos en checkout y hay un error de sesión, loguear
     if (is_checkout() && isset($_SESSION)) {
         if (isset($_SESSION['sco_flow_error_logged'])) {
-            error_log('SCO: Flow error was captured: ' . $_SESSION['sco_flow_error_logged']);
+            sco_pkg_log_debug('SCO: Flow error was captured: ' . $_SESSION['sco_flow_error_logged']);
         }
     }
+}
+
+// ============================================================================
+// FUNCIONES AUXILIARES PARA REGENERACIÓN DE PAQUETES
+// ============================================================================
+
+/**
+ * Generar composición excluyendo ciertos productos
+ * Usado para regenerar automáticamente cuando hay duplicados
+ */
+function sco_package_generate_composition_excluding_products($product_id, $exclude_product_ids = array(), $override_total = null)
+{
+    $mode = get_post_meta($product_id, '_sco_pkg_mode', true) ?: 'random';
+    $count = max(1, intval(get_post_meta($product_id, '_sco_pkg_count', true)) ?: 1);
+    $need_total = $override_total ? max(1, intval($override_total)) : $count;
+    $allow_oos = get_post_meta($product_id, '_sco_pkg_allow_oos', true) === 'yes';
+    $exclude_ids = array_map('intval', $exclude_product_ids);
+
+    $components = array();
+    $source = array();
+
+    if ($mode === 'manual') {
+        // Manual mode: use fixed products pero excluir los especificados
+        $csv = (string) get_post_meta($product_id, '_sco_pkg_products', true);
+        $ids = array_filter(array_map('intval', explode(',', $csv)));
+        $ids = array_unique($ids);
+
+        if (empty($ids)) {
+            return new WP_Error('sco_pkg_empty', __('Este paquete no tiene productos definidos.', 'sorteo-sco'));
+        }
+
+        // Remover productos en lista de exclusión
+        $valid_ids = array_filter($ids, function ($id) use ($exclude_ids) {
+            return !in_array($id, $exclude_ids);
+        });
+
+        // Validar productos
+        $final_ids = array();
+        foreach ($valid_ids as $pid) {
+            $p = wc_get_product($pid);
+            if (!$p || !$p->is_purchasable() || $p->is_type('variable')) {
+                continue;
+            }
+            if (!$allow_oos && !$p->is_in_stock()) {
+                continue;
+            }
+            if (sco_pkg_is_reserved_by_others_blocking($pid, 1)) {
+                continue;
+            }
+            $final_ids[] = $pid;
+        }
+
+        if (count($final_ids) < $count) {
+            return new WP_Error(
+                'sco_pkg_insufficient',
+                sprintf(
+                    __('No hay suficientes productos válidos (excluyendo duplicados). Se necesitan %d pero solo hay %d disponibles.', 'sorteo-sco'),
+                    $count,
+                    count($final_ids)
+                )
+            );
+        }
+
+        $pick = array_slice($final_ids, 0, $count);
+        foreach ($pick as $pid) {
+            $components[] = array('product_id' => $pid, 'qty' => 1);
+        }
+        $source = array('type' => 'manual', 'products' => $pick);
+    } else {
+        // Random mode: pick from categories
+        $csv = (string) get_post_meta($product_id, '_sco_pkg_categories', true);
+        $cat_ids = array_filter(array_map('intval', explode(',', $csv)));
+
+        if (empty($cat_ids)) {
+            return new WP_Error('sco_pkg_no_cat', __('No hay categorías seleccionadas para el paquete sorpresa.', 'sorteo-sco'));
+        }
+
+        $query_args = array(
+            'post_type' => 'product',
+            'posts_per_page' => 500,
+            'fields' => 'ids',
+            'post_status' => 'publish',
+            'tax_query' => array(
+                array(
+                    'taxonomy' => 'product_cat',
+                    'field' => 'term_id',
+                    'terms' => $cat_ids,
+                ),
+            ),
+        );
+
+        $product_ids = get_posts($query_args);
+        $product_ids = array_unique($product_ids);
+
+        $eligible = array();
+        foreach ($product_ids as $pid) {
+            // Excluir productos en la lista
+            if (in_array((int)$pid, $exclude_ids)) {
+                continue;
+            }
+
+            $p = wc_get_product($pid);
+            if (!$p || !$p->is_type('simple')) {
+                continue;
+            }
+            if ($p->get_type() === 'sco_package') {
+                continue;
+            }
+            if (!$p->is_purchasable()) {
+                continue;
+            }
+            if (!$allow_oos && !$p->is_in_stock()) {
+                continue;
+            }
+            if (sco_pkg_is_reserved_by_others_blocking($pid, 1)) {
+                continue;
+            }
+            $eligible[] = $pid;
+        }
+
+        if (count($eligible) < $count) {
+            return new WP_Error(
+                'sco_pkg_not_enough',
+                sprintf(
+                    __('No hay suficientes productos disponibles (excluyendo duplicados). Se necesitan %d pero solo hay %d.', 'sorteo-sco'),
+                    $count,
+                    count($eligible)
+                )
+            );
+        }
+
+        shuffle($eligible);
+        $pick = array_slice($eligible, 0, $count);
+        $pick = array_values(array_unique($pick));
+
+        foreach ($pick as $pid) {
+            $components[] = array('product_id' => $pid, 'qty' => 1);
+        }
+
+        $source = array('type' => 'random', 'categories' => $cat_ids);
+    }
+
+    error_log(sprintf(
+        'SORTEO SCO (Regenerated): product_id=%d, mode=%s, count=%d, excluded=%d, got=%d',
+        $product_id,
+        $mode,
+        $count,
+        count($exclude_ids),
+        count($components)
+    ));
+
+    return array(
+        'mode' => $mode,
+        'count' => $count,
+        'components' => $components,
+        'source' => $source,
+        'meta' => array(),
+    );
+}
+
+/**
+ * Obtener nombres de productos que sustituyeron a los duplicados
+ */
+function sco_pkg_get_substituted_products($exclude_ids, $new_components)
+{
+    $names = array();
+    foreach ($new_components as $comp) {
+        $pid = (int)$comp['product_id'];
+        if (!in_array($pid, $exclude_ids)) {
+            $p = wc_get_product($pid);
+            if ($p) {
+                $names[] = $p->get_name();
+            }
+        }
+    }
+    return $names;
+}
+
+/**
+ * Mostrar aviso en la página del carrito si hay productos duplicados NO RESUELTOS
+ * En la mayoría de casos, los duplicados se resuelven automáticamente
+ * Este aviso solo aparece si hay duplicados que NO se pudieron resolver (ej: paquetes de modo manual)
+ */
+add_action('woocommerce_before_cart_contents', 'sco_pkg_display_cart_duplicate_warning');
+function sco_pkg_display_cart_duplicate_warning()
+{
+    if (!WC()->cart || WC()->cart->is_empty()) {
+        return;
+    }
+
+    // Intentar resolver duplicados automáticamente entre paquetes ya en carrito (solo modo random)
+    $resolution = sco_pkg_attempt_resolve_cart_duplicates();
+
+    // Mapear productos a paquetes nuevamente después de intentar resolver
+    $product_to_packages = sco_pkg_map_product_to_packages();
+
+    // Detectar duplicados NO RESUELTOS
+    $duplicates = sco_pkg_detect_unresolved_duplicates($product_to_packages);
+
+    // Si hay duplicados sin resolver, mostrar aviso
+    if ($duplicates) {
+        wc_add_notice(
+            sco_pkg_render_duplicate_warning_html($duplicates),
+            'notice'
+        );
+    } elseif (!empty($resolution['regenerated'])) {
+        wc_add_notice(
+            __('Se detectaron productos duplicados entre paquetes y se regeneraron automáticamente.', 'sorteo-sco'),
+            'notice'
+        );
+    }
+}
+
+/**
+ * Intentar regenerar paquetes en el carrito para eliminar duplicados entre ellos
+ */
+function sco_pkg_attempt_resolve_cart_duplicates()
+{
+    $cart = WC()->cart;
+    if (!$cart || $cart->is_empty()) {
+        return array('regenerated' => false, 'failures' => array());
+    }
+
+    $regenerated = false;
+    $failures = array();
+
+    // Obtener vista de paquetes actuales
+    $packages = sco_pkg_get_cart_packages_overview();
+    if (empty($packages)) {
+        return array('regenerated' => false, 'failures' => array());
+    }
+
+    // Intentar hasta 2 pasadas para resolver duplicados en cadena
+    for ($pass = 1; $pass <= 2; $pass++) {
+        $product_to_packages = sco_pkg_map_product_to_packages_from_overview($packages);
+        $duplicates = array();
+        foreach ($product_to_packages as $pid => $pkg_keys) {
+            if (count($pkg_keys) > 1) {
+                $duplicates[$pid] = $pkg_keys;
+            }
+        }
+
+        if (empty($duplicates)) {
+            break; // no duplicates
+        }
+
+        foreach ($duplicates as $dup_pid => $pkg_keys) {
+            // Mantener el primer paquete, regenerar los siguientes si son random
+            $keep_first = array_shift($pkg_keys);
+            foreach ($pkg_keys as $pkg_key) {
+                if (!isset($packages[$pkg_key])) {
+                    continue;
+                }
+
+                $pkg = $packages[$pkg_key];
+                if ($pkg['mode'] !== 'random') {
+                    $failures[] = array('package' => $pkg['name'], 'reason' => 'manual_mode');
+                    continue;
+                }
+
+                // Construir lista de exclusión: todos los productos de otros paquetes
+                $exclude_ids = array();
+                foreach ($packages as $other_key => $other_pkg) {
+                    if ($other_key === $pkg_key) {
+                        continue;
+                    }
+                    $exclude_ids = array_merge($exclude_ids, $other_pkg['components']);
+                }
+                $exclude_ids = array_values(array_unique(array_map('intval', $exclude_ids)));
+
+                $override_total = $pkg['count'] ?: null;
+
+                $new_composition = sco_package_generate_composition_excluding_products($pkg['product_id'], $exclude_ids, $override_total);
+
+                if (is_wp_error($new_composition) || empty($new_composition['components'])) {
+                    $failures[] = array('package' => $pkg['name'], 'reason' => 'regen_failed');
+                    error_log(sprintf('SCO DUPCHK CART: regen failed for %s (%s)', $pkg['name'], is_wp_error($new_composition) ? $new_composition->get_error_message() : 'empty composition'));
+                    continue;
+                }
+
+                // Actualizar cart item
+                $cart_item_key = $pkg['cart_item_key'];
+                $cart->cart_contents[$cart_item_key]['sco_package']['components'] = $new_composition['components'];
+                $cart->cart_contents[$cart_item_key]['sco_package']['source'] = $new_composition['source'];
+                $cart->cart_contents[$cart_item_key]['sco_package']['meta'] = isset($new_composition['meta']) ? $new_composition['meta'] : array();
+                $cart->cart_contents[$cart_item_key]['sco_package']['mode'] = $new_composition['mode'];
+                $cart->cart_contents[$cart_item_key]['sco_package']['count'] = $new_composition['count'];
+                $cart->cart_contents[$cart_item_key]['unique_key'] = md5(maybe_serialize($cart->cart_contents[$cart_item_key]['sco_package']));
+
+                // Actualizar overview en memoria para siguientes pasadas
+                $packages[$pkg_key]['components'] = array_map(function ($c) {
+                    return (int)$c['product_id'];
+                }, $new_composition['components']);
+                $packages[$pkg_key]['mode'] = $new_composition['mode'];
+                $packages[$pkg_key]['count'] = $new_composition['count'];
+
+                $regenerated = true;
+                error_log(sprintf('SCO DUPCHK CART: regenerated package %s excluding %d items', $pkg['name'], count($exclude_ids)));
+            }
+        }
+    }
+
+    if ($regenerated) {
+        // Recalcular reservas: limpiar las previas y reconstruir desde el carrito actualizado
+        sco_pkg_clear_session_reservations();
+        sco_pkg_sync_reservations_with_cart(true);
+        error_log('SCO DUPCHK CART: reservations resynced after regeneration');
+    }
+
+    return array('regenerated' => $regenerated, 'failures' => $failures);
+}
+
+/**
+ * Obtener vista de paquetes en carrito
+ */
+function sco_pkg_get_cart_packages_overview()
+{
+    $cart = WC()->cart;
+    if (!$cart) {
+        return array();
+    }
+
+    $packages = array();
+    foreach ($cart->get_cart() as $cart_item_key => $cart_item) {
+        if (!isset($cart_item['sco_package'])) {
+            continue;
+        }
+        $pkg = $cart_item['sco_package'];
+        $product = $cart_item['data'];
+        if (!$product) {
+            continue;
+        }
+
+        $comp_ids = array();
+        foreach ($pkg['components'] as $comp) {
+            $comp_ids[] = (int)$comp['product_id'];
+        }
+
+        $packages[$cart_item_key] = array(
+            'cart_item_key' => $cart_item_key,
+            'product_id' => (int)$cart_item['product_id'],
+            'name' => $product->get_name(),
+            'mode' => isset($pkg['mode']) ? $pkg['mode'] : 'random',
+            'count' => isset($pkg['count']) ? (int)$pkg['count'] : count($comp_ids),
+            'components' => $comp_ids,
+            'qty' => isset($cart_item['quantity']) ? (int)$cart_item['quantity'] : 1,
+        );
+    }
+
+    return $packages;
+}
+
+/**
+ * Mapear productos a paquetes usando overview
+ */
+function sco_pkg_map_product_to_packages_from_overview($packages)
+{
+    $product_to_packages = array();
+    foreach ($packages as $key => $pkg) {
+        foreach ($pkg['components'] as $pid) {
+            if (!isset($product_to_packages[$pid])) {
+                $product_to_packages[$pid] = array();
+            }
+            $product_to_packages[$pid][] = $key;
+        }
+    }
+    return $product_to_packages;
+}
+
+/**
+ * Mapear productos a paquetes directamente desde el carrito
+ */
+function sco_pkg_map_product_to_packages()
+{
+    $cart = WC()->cart;
+    if (!$cart) {
+        return array();
+    }
+
+    $product_to_packages = array();
+    foreach ($cart->get_cart() as $cart_item) {
+        $product = $cart_item['data'];
+        if (!$product || $product->get_type() !== 'sco_package') {
+            continue;
+        }
+
+        $package_name = $product->get_name();
+
+        if (isset($cart_item['sco_package']) && isset($cart_item['sco_package']['components'])) {
+            foreach ($cart_item['sco_package']['components'] as $comp) {
+                $comp_product_id = intval($comp['product_id']);
+
+                if (!isset($product_to_packages[$comp_product_id])) {
+                    $product_to_packages[$comp_product_id] = array();
+                }
+
+                if (!in_array($package_name, $product_to_packages[$comp_product_id])) {
+                    $product_to_packages[$comp_product_id][] = $package_name;
+                }
+            }
+        }
+    }
+
+    return $product_to_packages;
+}
+
+/**
+ * Detectar duplicados no resueltos en el mapa producto->paquetes
+ */
+function sco_pkg_detect_unresolved_duplicates($product_to_packages)
+{
+    $duplicates = array();
+    foreach ($product_to_packages as $product_id => $packages) {
+        if (count($packages) > 1) {
+            $product = wc_get_product($product_id);
+            $product_name = $product ? $product->get_name() : sprintf(__('Producto %d', 'sorteo-sco'), $product_id);
+
+            $duplicates[] = array(
+                'product_id' => $product_id,
+                'product_name' => $product_name,
+                'packages' => $packages,
+            );
+        }
+    }
+    return $duplicates;
+}
+
+/**
+ * Renderizar HTML del aviso de duplicados con tabla legible
+ */
+function sco_pkg_render_duplicate_warning_html($duplicates)
+{
+    ob_start();
+?>
+    <div class="alert alert-warning" role="alert" style="margin: 15px 0; padding: 15px; border: 2px solid #ff9800; border-radius: 4px; background-color: #fff3cd; color: #856404;">
+        <strong style="font-size: 16px; display: block; margin-bottom: 10px;">
+            ⚠️ <?php echo esc_html__('¡ADVERTENCIA: Productos Duplicados Detectados!', 'sorteo-sco'); ?>
+        </strong>
+
+        <p style="margin-bottom: 10px;">
+            <?php echo esc_html__('Tu carrito contiene productos que aparecen en múltiples paquetes. Esto puede causar problemas al procesar tu pedido.', 'sorteo-sco'); ?>
+        </p>
+
+        <table style="width: 100%; border-collapse: collapse; margin: 15px 0; background-color: white;">
+            <thead>
+                <tr style="background-color: #f5f5f5; border-bottom: 2px solid #ddd;">
+                    <th style="padding: 10px; text-align: left; border-right: 1px solid #ddd;">
+                        <?php echo esc_html__('Producto', 'sorteo-sco'); ?>
+                    </th>
+                    <th style="padding: 10px; text-align: left;">
+                        <?php echo esc_html__('Aparece en Paquetes', 'sorteo-sco'); ?>
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($duplicates as $dup): ?>
+                    <tr style="border-bottom: 1px solid #ddd;">
+                        <td style="padding: 10px; border-right: 1px solid #ddd;">
+                            <strong><?php echo esc_html($dup['product_name']); ?></strong>
+                            <br><small style="color: #666;"><?php echo sprintf(esc_html__('ID: %d', 'sorteo-sco'), $dup['product_id']); ?></small>
+                        </td>
+                        <td style="padding: 10px;">
+                            <ul style="margin: 0; padding-left: 20px;">
+                                <?php foreach ($dup['packages'] as $pkg_name): ?>
+                                    <li><?php echo esc_html($pkg_name); ?></li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <p style="margin: 10px 0; font-style: italic;">
+            <?php echo esc_html__('Por favor, elimina algunos paquetes para evitar duplicados antes de proceder al checkout. El pago será bloqueado si hay productos repetidos.', 'sorteo-sco'); ?>
+        </p>
+    </div>
+<?php
+    return ob_get_clean();
 }

@@ -5,6 +5,74 @@
 
 ---
 
+## [1.9.20] - 2026-01-04
+
+### 🐛 Bugfixes Críticos
+
+**Productos Duplicados en Paquetes**:
+- 🔧 Corregida validación en `sco_package_validate_duplicate_in_cart()` para prevenir productos duplicados entre múltiples paquetes
+- ✅ Ahora detecta y bloquea cuando se intenta agregar un paquete que contiene productos ya incluidos en otro paquete del carrito
+- 🆕 **NUEVO - Regeneración Automática**: Para paquetes en modo sorpresa (random)
+  - Nueva función `sco_package_generate_composition_excluding_products()` genera composición sin duplicados
+  - El sistema automáticamente regenera el paquete en lugar de rechazarlo
+  - Aviso informativo: "Se detectaron productos duplicados. Se sustituyeron automáticamente por [nuevos productos]"
+  - Minimiza fricción del usuario: no tiene que hacer nada manualmente
+  - **Autoregeneración en carrito**: Si paquetes ya añadidos comparten productos, se regeneran excluyendo los componentes existentes y se resincronizan las reservas de stock
+- 🆕 **NUEVO - Aviso Solo para No Resueltos**: Para paquetes en modo manual (productos fijos)
+  - Si no se puede regenerar (modo manual), muestra error claro
+  - Aviso visual en carrito solo para duplicados que persisten
+
+**Correos Duplicados por Paquete**:
+- 🔧 Refactorizada función `send_package_component_downloads_email()` en `class-sorteo-email.php`
+- ✅ Ahora procesa TODOS los paquetes del pedido en un solo email
+- ✅ Eliminado loop que enviaba un email por cada paquete
+- 🔧 Modificada lógica en `sorteo_sco_grant_package_downloads()`:
+  - Verificación de envío a nivel de pedido (no por item)
+  - Marca `_sco_pkg_downloads_email_sent` solo después del envío exitoso
+  - Pasa `null` como parámetro para procesar todos los paquetes
+- 📧 Subject del email ahora muestra número de pedido cuando hay múltiples paquetes
+- 📊 Email incluye tabla consolidada con todas las descargas de todos los paquetes
+
+**Notas de Pedido Duplicadas**:
+- 🔧 Consolidadas notas de stock en `sco_package_reduce_components_stock()`
+- 🔧 Consolidadas notas de restauración en `sco_package_restore_components_stock()`
+- ✅ Ahora se agrega UNA SOLA nota por pedido para todos los paquetes
+- 📋 Formato jerárquico con bullets:
+  ```
+  Stock descontado de componentes de 3 paquete(s):
+  • Pack Promo 5:
+    - Sticker SR 10706 (ID: 12311) x1
+    - Sticker SR 10875 (ID: 12649) x1
+  • Pack Promo 3:
+    - Sticker SR 10981 (ID: 12861) x1
+  ```
+- ✅ Aplica tanto para descuento de stock como para restauración por cancelación/reembolso
+
+### 🎯 Mejoras
+
+- 🔄 Backward compatibility: función de email acepta parámetro opcional para procesar item específico o todos
+- 📝 Notas de pedido más descriptivas: indican cuántos archivos y de cuántos paquetes
+- 🛡️ Validación robusta: verifica existencia de productos antes de procesamiento
+- 🎨 Formato de notas profesional y fácil de leer
+- 🆕 Función `sco_package_generate_composition_excluding_products()` para regeneración inteligente
+- 🆕 Función `sco_pkg_get_substituted_products()` para obtener nombres de productos sustitutos
+
+**Flujo de Validación en 3 Niveles (Inteligente):**
+1. **Add-to-cart** (`sco_package_validate_duplicate_in_cart`): Detecta duplicados y marca para regeneración
+2. **Agregar al carrito** (`sco_package_add_cart_item_data`): Regenera automáticamente si es posible en modo random
+3. **Carrito** (`sco_pkg_display_cart_duplicate_warning`): Muestra aviso solo para duplicados no resueltos
+4. **Checkout** (`sco_pkg_checkout_validation`): Bloquea pago si persisten duplicados
+
+**Impacto**:
+- ✅ Experiencia de usuario mejorada: eliminación automática de conflictos en modo sorpresa
+- ✅ Reducción de spam: un solo email por pedido en lugar de uno por paquete
+- ✅ Mensajes informativos claros en lugar de errores
+- ✅ Mayor confiabilidad en el proceso de compra
+- ✅ Notas de pedido limpias: de 6+ notas a solo 1 nota consolidada por operación
+- ✅ Prevención de errores de pago debidos a productos duplicados
+
+---
+
 ## [1.9.18.1] - 2026-01-04 (Hotfix)
 
 ### 🐛 Bugfixes

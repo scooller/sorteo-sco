@@ -1383,28 +1383,24 @@ class Sorteo_WC_Extra
 
         global $wpdb;
 
-        // Usar tabla nativa de WooCommerce
+        // Usar tabla nativa de WooCommerce (si existe)
         $table = $wpdb->prefix . 'wc_reserved_stock';
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table'") === $table;
 
-        // Verificar que la tabla existe
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
-            wp_send_json_error(['message' => __('No hay reservas activas o WooCommerce no tiene HPOS habilitado.', 'sorteo-sco')]);
+        $reservations = array();
+        if ($table_exists) {
+            $reservations = $wpdb->get_results(
+                "SELECT CONCAT(rs.order_id, '-', rs.product_id) as id, rs.product_id, rs.order_id, rs.expires
+                 FROM {$table} rs
+                 ORDER BY rs.expires ASC",
+                ARRAY_A
+            );
         }
 
-        $reservations = $wpdb->get_results(
-            "SELECT CONCAT(rs.order_id, '-', rs.product_id) as id, rs.product_id, rs.order_id, rs.expires
-             FROM {$table} rs
-             ORDER BY rs.expires ASC",
-            ARRAY_A
-        );
+        $data = array();
+        $current_time = current_time('timestamp', true);
 
-        if (empty($reservations)) {
-            wp_send_json_success([]);
-        }
-
-        $data = [];
-        $current_time = current_time('timestamp');
-
+        // 1) Reservas creadas por WooCommerce (tabla wc_reserved_stock)
         foreach ($reservations as $res) {
             $product = wc_get_product($res['product_id']);
             $order = wc_get_order($res['order_id']);
@@ -1426,7 +1422,7 @@ class Sorteo_WC_Extra
             $order_date = $order->get_date_created();
             $reserved_at = $order_date ? $order_date->format('Y-m-d H:i:s') : current_time('mysql');
 
-            $expires_timestamp = strtotime($res['expires']);
+            $expires_timestamp = strtotime($res['expires'] . ' UTC');
             $seconds_remaining = $expires_timestamp - $current_time;
             $expires_soon = $seconds_remaining < 600; // menos de 10 minutos
             $expired = $seconds_remaining < 0;
@@ -1475,6 +1471,62 @@ class Sorteo_WC_Extra
             ];
         }
 
+        // 2) Reservas en carrito (transient bootstrap_theme_stock_reservations) para mostrar componentes + sueltos
+        $transient_reservations = get_transient('bootstrap_theme_stock_reservations') ?: array();
+        $transient_expiry = 30 * MINUTE_IN_SECONDS; // alineado con el tema
+
+        foreach ($transient_reservations as $session_id => $items) {
+            foreach ($items as $product_id => $entry) {
+                $product = wc_get_product($product_id);
+                if (!$product) {
+                    continue;
+                }
+
+                $quantity = isset($entry['quantity']) ? (int) $entry['quantity'] : 0;
+                if ($quantity <= 0) {
+                    continue;
+                }
+
+                $timestamp = isset($entry['timestamp']) ? (int) $entry['timestamp'] : $current_time;
+                $expires_timestamp = $timestamp + $transient_expiry;
+                $seconds_remaining = $expires_timestamp - $current_time;
+                $expires_soon = $seconds_remaining < 600;
+                $expired = $seconds_remaining < 0;
+
+                if ($seconds_remaining > 0) {
+                    $minutes = floor($seconds_remaining / 60);
+                    $hours = floor($minutes / 60);
+
+                    if ($hours > 0) {
+                        $expires_in = $hours . 'h ' . ($minutes % 60) . 'm';
+                    } else {
+                        $expires_in = $minutes . 'm';
+                    }
+                } else {
+                    $expires_in = __('Expirado', 'sorteo-sco');
+                }
+
+                $session_label = substr((string) $session_id, 0, 8);
+                $source = isset($entry['source']) ? $entry['source'] : 'cart';
+
+                $data[] = array(
+                    'id' => 'cart|' . rawurlencode((string) $session_id) . '|' . (int) $product_id,
+                    'product_id' => (int) $product_id,
+                    'product_name' => $product->get_name(),
+                    'order_id' => __('Carrito', 'sorteo-sco') . ' (' . $session_label . ')',
+                    'order_edit_url' => '#',
+                    'order_status' => 'cart',
+                    'order_status_name' => __('En carrito', 'sorteo-sco') . ' / ' . $source,
+                    'order_status_color' => '#6c757d',
+                    'quantity' => $quantity,
+                    'reserved_at' => date_i18n('d/m/Y H:i', $timestamp),
+                    'expires_in' => $expires_in,
+                    'expires_soon' => $expires_soon,
+                    'expired' => $expired
+                );
+            }
+        }
+
         wp_send_json_success($data);
     }
 
@@ -1494,14 +1546,40 @@ class Sorteo_WC_Extra
             // Liberar todas las reservas
             $result = $wpdb->query("DELETE FROM {$table}");
 
+            // Limpiar reservas en carrito (transient)
+            delete_transient('bootstrap_theme_stock_reservations');
+
             if ($result !== false) {
                 wp_send_json_success(['message' => __('Todas las reservas fueron liberadas.', 'sorteo-sco')]);
             } else {
                 wp_send_json_error(['message' => __('Error al liberar reservas.', 'sorteo-sco')]);
             }
         } elseif (isset($_POST['reservation_id']) && !empty($_POST['reservation_id'])) {
-            // Liberar reserva individual usando formato "order_id-product_id"
+            // Formatos: "order_id-product_id" (tabla wc_reserved_stock) o "cart|session|product"
             $reservation_id = sanitize_text_field($_POST['reservation_id']);
+
+            if (strpos($reservation_id, 'cart|') === 0) {
+                $parts = explode('|', $reservation_id);
+                if (count($parts) !== 3) {
+                    wp_send_json_error(['message' => __('Identificador de reserva inválido.', 'sorteo-sco')]);
+                }
+
+                $session_id = rawurldecode($parts[1]);
+                $product_id = intval($parts[2]);
+
+                $reservations = get_transient('bootstrap_theme_stock_reservations') ?: array();
+                if (isset($reservations[$session_id][$product_id])) {
+                    unset($reservations[$session_id][$product_id]);
+                    if (empty($reservations[$session_id])) {
+                        unset($reservations[$session_id]);
+                    }
+                    set_transient('bootstrap_theme_stock_reservations', $reservations, 30 * MINUTE_IN_SECONDS);
+                }
+
+                wp_send_json_success(['message' => __('Reserva liberada.', 'sorteo-sco')]);
+            }
+
+            // Liberar reserva individual usando formato "order_id-product_id"
             $parts = explode('-', $reservation_id);
 
             if (count($parts) !== 2) {

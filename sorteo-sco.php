@@ -2,7 +2,7 @@
 /*
 Plugin Name: Sorteo
 Description: Plugin para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas y marcos visuales en WooCommerce.
-Version: 1.9.18
+Version: 1.9.20
 Author: scooller
 Author URI: https://scooller.bio
 Plugin URI: https://scooller.bio
@@ -22,7 +22,7 @@ add_action('before_woocommerce_init', function () {
 });
 
 // Definir constantes del plugin
-define('SORTEO_SCO_VERSION', '1.9.18');
+define('SORTEO_SCO_VERSION', '1.9.20');
 define('SORTEO_SCO_PLUGIN_FILE', __FILE__);
 define('SORTEO_SCO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SORTEO_SCO_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -203,6 +203,11 @@ function sorteo_sco_reserve_stock_on_checkout($order_id)
 	if (function_exists('wc_reserve_stock_for_order')) {
 		try {
 			wc_reserve_stock_for_order($order);
+
+			// Reservar también los componentes de paquetes que no están como line items
+			if (function_exists('sco_pkg_reserve_components_for_order')) {
+				sco_pkg_reserve_components_for_order($order);
+			}
 			$order->update_meta_data('_stock_reserved', 'yes');
 			$order->save();
 		} catch (Exception $e) {
@@ -514,14 +519,32 @@ function sorteo_sco_grant_package_downloads($order_id, $order = null)
 		$order->save();
 	}
 
-	// Enviar email personalizado si algún paquete es virtual y tiene componentes descargables
-	// Se ejecuta siempre, no solo cuando se procesan archivos
+	// Enviar email personalizado UNA SOLA VEZ por pedido (no por cada paquete)
+	// Se ejecuta solo si hay paquetes con componentes descargables Y no se ha enviado previamente
 	if (class_exists('Sorteo_SCO_Email') && function_exists('sorteo_sco_package_needs_custom_downloads_email')) {
-		foreach ($order->get_items() as $item_id => $item) {
-			$product = $item->get_product();
-			if ($product && $product->get_type() === 'sco_package') {
-				if (sorteo_sco_package_needs_custom_downloads_email($product)) {
-					Sorteo_SCO_Email::send_package_component_downloads_email($order_id, $item);
+		// Verificar si ya se envió el email general del pedido
+		if ('yes' !== $order->get_meta('_sco_pkg_downloads_email_sent')) {
+			$has_downloadable_packages = false;
+
+			// Verificar si hay al menos un paquete con componentes descargables
+			foreach ($order->get_items() as $item_id => $item) {
+				$product = $item->get_product();
+				if ($product && $product->get_type() === 'sco_package') {
+					if (sorteo_sco_package_needs_custom_downloads_email($product)) {
+						$has_downloadable_packages = true;
+						break;
+					}
+				}
+			}
+
+			// Enviar UNA SOLA VEZ si hay paquetes descargables
+			// Pasar NULL para que procese TODOS los paquetes del pedido
+			if ($has_downloadable_packages) {
+				$sent = Sorteo_SCO_Email::send_package_component_downloads_email($order_id, null);
+				if ($sent) {
+					// Marcar como enviado a nivel de pedido
+					$order->update_meta_data('_sco_pkg_downloads_email_sent', 'yes');
+					$order->save();
 				}
 			}
 		}
