@@ -361,7 +361,6 @@ function sorteo_sco_featured_first_orderby($clauses, $query)
 	$featured_term = get_term_by('name', 'featured', 'product_visibility');
 
 	if (!$featured_term) {
-		error_log('SORTEO SCO Featured: No featured term found in product_visibility taxonomy');
 		return $clauses;
 	}
 
@@ -370,20 +369,7 @@ function sorteo_sco_featured_first_orderby($clauses, $query)
 	// Solo loggear la primera query principal
 	static $logged = false;
 	if (!$logged && !empty($clauses['orderby']) && strpos($clauses['orderby'], 'RAND()') !== false) {
-		error_log('SORTEO SCO Featured: Featured term ID: ' . $featured_term_id);
-
-		// Verificar productos destacados usando la taxonomía (solo productos padre, no variaciones)
-		$featured_count = $wpdb->get_var($wpdb->prepare(
-			"SELECT COUNT(DISTINCT tr.object_id) 
-			FROM {$wpdb->term_relationships} tr
-			INNER JOIN {$wpdb->posts} p ON tr.object_id = p.ID
-			WHERE tr.term_taxonomy_id = %d 
-			AND p.post_type = 'product'
-			AND p.post_status = 'publish'",
-			$featured_term_id
-		));
-		error_log('SORTEO SCO Featured: Total featured products: ' . $featured_count);
-
+		// Se consultan productos destacados solo una vez, sin log de depuración en producción
 		$logged = true;
 	}
 

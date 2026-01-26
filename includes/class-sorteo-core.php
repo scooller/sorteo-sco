@@ -636,18 +636,30 @@ class Sorteo_SCO_Core
 		$subject = sprintf('[%s] Sorteo Automático Ejecutado', $site_name);
 
 		$message = sprintf(
-			"Se ha ejecutado un sorteo automático.\n\nDetalles:\n- Ganador: %s (%s)\n- Premio: %s\n- Valor: %s\n- Fecha: %s\n- Tipo: %s\n- Pedido: #%s",
-			$draw_data['winner_name'],
-			$draw_data['winner_email'],
-			$draw_data['prize_name'],
+			"<html><body style='font-family: Arial, sans-serif; line-height: 1.6;'>
+			<h2 style='color: #2271b1;'>Se ha ejecutado un sorteo automático</h2>
+			<table style='border-collapse: collapse; width: 100%%; max-width: 600px;'>
+				<tr><td style='padding: 10px; border-bottom: 1px solid #ddd;'><strong>Ganador:</strong></td><td style='padding: 10px; border-bottom: 1px solid #ddd;'>%s (%s)</td></tr>
+				<tr><td style='padding: 10px; border-bottom: 1px solid #ddd;'><strong>Premio:</strong></td><td style='padding: 10px; border-bottom: 1px solid #ddd;'>%s</td></tr>
+				<tr><td style='padding: 10px; border-bottom: 1px solid #ddd;'><strong>Valor:</strong></td><td style='padding: 10px; border-bottom: 1px solid #ddd;'>%s</td></tr>
+				<tr><td style='padding: 10px; border-bottom: 1px solid #ddd;'><strong>Fecha:</strong></td><td style='padding: 10px; border-bottom: 1px solid #ddd;'>%s</td></tr>
+				<tr><td style='padding: 10px; border-bottom: 1px solid #ddd;'><strong>Tipo:</strong></td><td style='padding: 10px; border-bottom: 1px solid #ddd;'>%s</td></tr>
+				<tr><td style='padding: 10px; border-bottom: 1px solid #ddd;'><strong>Pedido:</strong></td><td style='padding: 10px; border-bottom: 1px solid #ddd;'>#%s</td></tr>
+			</table>
+			</body></html>",
+			esc_html($draw_data['winner_name']),
+			esc_html($draw_data['winner_email']),
+			esc_html($draw_data['prize_name']),
 			sorteo_sco_format_price($draw_data['prize_price']),
-			$draw_data['date'],
-			$draw_data['type'],
-			$draw_data['order_id']
+			esc_html($draw_data['date']),
+			esc_html($draw_data['type']),
+			esc_html($draw_data['order_id'])
 		);
 
+		$headers = array('Content-Type: text/html; charset=UTF-8');
+
 		foreach ($admins as $admin) {
-			wp_mail($admin->user_email, $subject, $message);
+			wp_mail($admin->user_email, $subject, $message, $headers);
 		}
 	}
 
@@ -1143,7 +1155,6 @@ class Sorteo_SCO_Core
 			if ($winner_data && isset($winner_data['shown']) && !$winner_data['shown']) {
 				$winner_data['shown'] = true;
 				WC()->session->set('sorteo_winner_notice', $winner_data);
-				error_log('Sorteo SCO: Mensaje mostrado via sesión WC');
 				return true;
 			}
 		}
@@ -1153,7 +1164,6 @@ class Sorteo_SCO_Core
 			foreach ($_COOKIE as $key => $value) {
 				if (strpos($key, 'sorteo_winner_') === 0 && $value == '1') {
 					@setcookie($key, '', time() - 3600, '/', '', is_ssl(), false);
-					error_log('Sorteo SCO: Mensaje mostrado via cookie');
 					return true;
 				}
 			}
@@ -1167,6 +1177,8 @@ class Sorteo_SCO_Core
 	 */
 	private function process_custom_fields_for_guest($message)
 	{
+		$message = wp_specialchars_decode((string) $message);
+
 		// Obtener datos del premio
 		$prize_name = get_option('sorteo_sco_prize_name', 'Premio sorpresa');
 		$prize_price = floatval(get_option('sorteo_sco_prize_price', 0));
@@ -1685,6 +1697,8 @@ class Sorteo_SCO_Core
 	 */
 	public static function process_custom_fields_static($message, $user_id = null)
 	{
+		$message = wp_specialchars_decode((string) $message);
+
 		// Obtener datos del usuario ganador
 		$user_name = '';
 		if ($user_id) {

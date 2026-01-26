@@ -392,8 +392,6 @@ function sco_package_validate_before_add_to_cart($passed, $product_id, $quantity
         }
     }
 
-    error_log(sprintf('SCO DUPCHK: pkg #%d mode=%s qty=%d products_in_cart=%d', $product_id, $mode, $quantity, count($products_in_cart)));
-
     sco_pkg_log_debug('SCO: Products already in cart packages: ' . count($products_in_cart));
 
     // Intentar generar composición (máx 3 intentos para random mode)
@@ -412,13 +410,7 @@ function sco_package_validate_before_add_to_cart($passed, $product_id, $quantity
             $composition = sco_package_generate_composition_excluding_products($product_id, array_keys($products_in_cart), $need_total);
         }
 
-        if (!is_wp_error($composition)) {
-            $picked_ids = array();
-            foreach ($composition['components'] as $comp) {
-                $picked_ids[] = (int)$comp['product_id'];
-            }
-            error_log(sprintf('SCO DUPCHK: attempt %d picked=%s', $attempt, implode(',', $picked_ids)));
-        }
+        // picked IDs debug eliminado para producción
 
         // Validar si hay error
         if (is_wp_error($composition)) {
@@ -487,7 +479,6 @@ function sco_package_validate_before_add_to_cart($passed, $product_id, $quantity
             ),
             'notice'
         );
-        error_log(sprintf('SCO DUPCHK: regenerated %d duplicate(s) for pkg #%d', $dup_count, $product_id));
         sco_pkg_log_debug('SCO: Substitution notice shown - regenerated ' . $dup_count . ' products');
     }
 

@@ -409,7 +409,7 @@ class Sorteo_SCO_Email
 		$subject = self::process_custom_fields_for_order($subject_template, $order);
 
 		// Headers con From personalizado
-		$headers = array('Content-Type: text/plain; charset=UTF-8');
+		$headers = array('Content-Type: text/html; charset=UTF-8');
 
 		$from_email = get_option('sorteo_sco_from_email', get_option('admin_email'));
 		$from_name = get_option('sorteo_sco_from_name', get_bloginfo('name'));
@@ -432,6 +432,8 @@ class Sorteo_SCO_Email
 	 */
 	private static function process_custom_fields_for_order($message, $order)
 	{
+		$message = wp_specialchars_decode((string) $message);
+
 		$first_name = $order->get_billing_first_name();
 		$last_name = $order->get_billing_last_name();
 		$user_name = trim($first_name . ' ' . $last_name);
@@ -468,7 +470,7 @@ class Sorteo_SCO_Email
 	 * @return int Cantidad de permisos
 	 * @since 1.9.11
 	 */
-	private static function get_permissions_count($order_id)
+	public static function get_permissions_count($order_id)
 	{
 		$cache_key = 'sco_perms_count_' . $order_id;
 		$perm_count = wp_cache_get($cache_key);
