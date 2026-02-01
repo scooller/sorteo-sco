@@ -18,6 +18,7 @@ class Sorteo_WC_Extra
         add_action('admin_menu', [$this, 'add_submenu_page'], 20);
         add_action('admin_init', [$this, 'register_settings']);
         add_action('wp_ajax_sorteo_update_prices', [$this, 'ajax_update_prices']);
+        add_action('wp_ajax_nopriv_sorteo_update_prices', [$this, 'ajax_update_prices']);
         add_action('wp_ajax_sorteo_update_prices_batch', [$this, 'ajax_update_prices_batch']);
         add_action('wp_ajax_sorteo_get_package_metrics', [$this, 'ajax_get_package_metrics']);
         add_action('wp_ajax_sorteo_get_reserved_stock', [$this, 'ajax_get_reserved_stock']);
@@ -254,9 +255,7 @@ class Sorteo_WC_Extra
                     // Obtener datos del formulario
                     var formData = {
                         target_category: $form.find('[name="target_category"]').val(),
-                        exclude_categories: $form.find('[name="exclude_categories[]"]:checked').map(function() {
-                            return $(this).val();
-                        }).get(),
+                        exclude_categories: $form.find('[name="exclude_categories[]"]').val() || [],
                         update_type: $form.find('[name="update_type"]').val(),
                         update_value: parseFloat($form.find('[name="update_value"]').val()),
                         apply_to: $form.find('[name="apply_to"]:checked').val(),
@@ -274,13 +273,17 @@ class Sorteo_WC_Extra
                     $.ajax({
                         url: ajaxurl,
                         type: 'POST',
-                        contentType: 'application/json',
-                        data: JSON.stringify({
+                        data: {
                             action: 'sorteo_update_prices',
                             nonce: '<?php echo wp_create_nonce('sorteo_price_update_ajax'); ?>',
-                            formData: formData,
+                            target_category: formData.target_category,
+                            exclude_categories: formData.exclude_categories,
+                            update_type: formData.update_type,
+                            update_value: formData.update_value,
+                            apply_to: formData.apply_to,
+                            dry_run: formData.dry_run ? '1' : '0',
                             step: 'count'
-                        }),
+                        },
                         success: function(response) {
                             if (!response.success) {
                                 $btn.prop('disabled', false);
@@ -298,14 +301,18 @@ class Sorteo_WC_Extra
                                 $.ajax({
                                     url: ajaxurl,
                                     type: 'POST',
-                                    contentType: 'application/json',
-                                    data: JSON.stringify({
+                                    data: {
                                         action: 'sorteo_update_prices_batch',
                                         nonce: '<?php echo wp_create_nonce('sorteo_price_update_batch'); ?>',
-                                        formData: formData,
+                                        target_category: formData.target_category,
+                                        exclude_categories: formData.exclude_categories,
+                                        update_type: formData.update_type,
+                                        update_value: formData.update_value,
+                                        apply_to: formData.apply_to,
+                                        dry_run: formData.dry_run ? '1' : '0',
                                         offset: batch * batchSize,
                                         limit: batchSize
-                                    }),
+                                    },
                                     success: function(batchResponse) {
                                         if (batchResponse.success) {
                                             allProducts = allProducts.concat(batchResponse.data.products);
@@ -491,14 +498,8 @@ class Sorteo_WC_Extra
             wp_send_json_error(['message' => __('No autorizado', 'sorteo-sco')]);
         }
 
-        // Leer JSON de entrada
-        $input = json_decode(file_get_contents('php://input'), true);
-
-        $step = isset($input['step']) ? sanitize_text_field($input['step']) : '';
-        $form = isset($input['formData']) && is_array($input['formData']) ? $input['formData'] : [];
-
-        $target_category = isset($form['target_category']) ? intval($form['target_category']) : 0;
-        $exclude_categories = isset($form['exclude_categories']) && is_array($form['exclude_categories']) ? array_map('intval', $form['exclude_categories']) : [];
+        $step = isset($_POST['step']) ? sanitize_text_field($_POST['step']) : '';
+        $target_category = isset($_POST['target_category']) ? intval($_POST['target_category']) : 0;
 
         if (!$target_category) {
             wp_send_json_error(['message' => __('Categoría objetivo requerida', 'sorteo-sco')]);
@@ -522,6 +523,10 @@ class Sorteo_WC_Extra
             $product_ids = get_posts($args);
             $count = 0;
 
+            // Procesar categorías excluidas
+            $exclude_categories = isset($_POST['exclude_categories']) ? (array) $_POST['exclude_categories'] : [];
+            $exclude_categories = array_map('intval', $exclude_categories);
+
             foreach ($product_ids as $product_id) {
                 $product_categories = wp_get_post_terms($product_id, 'product_cat', ['fields' => 'ids']);
                 $has_excluded = array_intersect($product_categories, $exclude_categories);
@@ -542,20 +547,16 @@ class Sorteo_WC_Extra
             wp_send_json_error(['message' => __('No autorizado', 'sorteo-sco')]);
         }
 
-        // Leer JSON de entrada
-        $input = json_decode(file_get_contents('php://input'), true);
+        $target_category = isset($_POST['target_category']) ? intval($_POST['target_category']) : 0;
+        $exclude_categories = isset($_POST['exclude_categories']) ? (array) $_POST['exclude_categories'] : [];
+        $exclude_categories = array_map('intval', $exclude_categories);
+        $update_type = isset($_POST['update_type']) ? sanitize_text_field($_POST['update_type']) : 'percentage';
+        $update_value = isset($_POST['update_value']) ? floatval($_POST['update_value']) : 0;
+        $apply_to = isset($_POST['apply_to']) ? sanitize_text_field($_POST['apply_to']) : 'regular';
+        $dry_run = isset($_POST['dry_run']) && $_POST['dry_run'] === '1';
 
-        $form = isset($input['formData']) && is_array($input['formData']) ? $input['formData'] : [];
-
-        $target_category = isset($form['target_category']) ? intval($form['target_category']) : 0;
-        $exclude_categories = isset($form['exclude_categories']) && is_array($form['exclude_categories']) ? array_map('intval', $form['exclude_categories']) : [];
-        $update_type = isset($form['update_type']) ? sanitize_text_field($form['update_type']) : 'percentage';
-        $update_value = isset($form['update_value']) ? floatval($form['update_value']) : 0;
-        $apply_to = isset($form['apply_to']) ? sanitize_text_field($form['apply_to']) : 'regular';
-        $dry_run = isset($form['dry_run']) && $form['dry_run'] === true;
-
-        $offset = isset($input['offset']) ? intval($input['offset']) : 0;
-        $limit = isset($input['limit']) ? intval($input['limit']) : 50;
+        $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+        $limit = isset($_POST['limit']) ? intval($_POST['limit']) : 50;
 
         if (!$target_category) {
             wp_send_json_error(['message' => __('Categoría objetivo requerida', 'sorteo-sco')]);
