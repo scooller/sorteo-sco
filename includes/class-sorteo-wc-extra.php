@@ -20,6 +20,8 @@ class Sorteo_WC_Extra
         add_action('wp_ajax_sorteo_update_prices', [$this, 'ajax_update_prices']);
         add_action('wp_ajax_nopriv_sorteo_update_prices', [$this, 'ajax_update_prices']);
         add_action('wp_ajax_sorteo_update_prices_batch', [$this, 'ajax_update_prices_batch']);
+        add_action('wp_ajax_sorteo_export_sales', [$this, 'ajax_export_sales']);
+        add_action('wp_ajax_sorteo_fix_package_duplicates', [$this, 'ajax_fix_package_duplicates']);
         add_action('wp_ajax_sorteo_get_package_metrics', [$this, 'ajax_get_package_metrics']);
         add_action('wp_ajax_sorteo_get_reserved_stock', [$this, 'ajax_get_reserved_stock']);
         add_action('wp_ajax_sorteo_release_reservation', [$this, 'ajax_release_reservation']);
@@ -65,6 +67,10 @@ class Sorteo_WC_Extra
                     class="nav-tab <?php echo $active_tab === 'price_updater' ? 'nav-tab-active' : ''; ?>">
                     <?php esc_html_e('Actualizar Precios', 'sorteo-sco'); ?>
                 </a>
+                <a href="?page=sorteo-wc-extra&tab=export_sales"
+                    class="nav-tab <?php echo $active_tab === 'export_sales' ? 'nav-tab-active' : ''; ?>">
+                    <?php esc_html_e('Exportar Ventas', 'sorteo-sco'); ?>
+                </a>
                 <a href="?page=sorteo-wc-extra&tab=package_metrics"
                     class="nav-tab <?php echo $active_tab === 'package_metrics' ? 'nav-tab-active' : ''; ?>">
                     <?php esc_html_e('Métricas Paquetes', 'sorteo-sco'); ?>
@@ -83,6 +89,8 @@ class Sorteo_WC_Extra
                 <?php
                 if ($active_tab === 'price_updater') {
                     $this->render_price_updater_tab();
+                } elseif ($active_tab === 'export_sales') {
+                    $this->render_export_sales_tab();
                 } elseif ($active_tab === 'package_metrics') {
                     $this->render_package_metrics_tab();
                 } elseif ($active_tab === 'stock_config') {
@@ -384,6 +392,237 @@ class Sorteo_WC_Extra
                             $btn.prop('disabled', false);
                             $spinner.removeClass('is-active');
                             $results.html('<div class="notice notice-error"><p><?php esc_html_e('Error de comunicación con el servidor.', 'sorteo-sco'); ?></p></div>');
+                        }
+                    });
+                });
+            });
+        </script>
+    <?php
+    }
+
+    private function render_export_sales_tab()
+    {
+    ?>
+        <h2><?php esc_html_e('Exportar Ventas con Desglose de Paquetes', 'sorteo-sco'); ?></h2>
+        <p><?php esc_html_e('Exporta todas las ventas. Si hay paquetes SCO, desglosa cada producto del paquete como una línea separada con advertencia de duplicados.', 'sorteo-sco'); ?></p>
+
+        <form id="sorteo-export-form" method="post" style="max-width:900px;">
+            <?php wp_nonce_field('sorteo_export_sales', 'sorteo_export_nonce'); ?>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php esc_html_e('Rango de Fechas', 'sorteo-sco'); ?></th>
+                    <td>
+                        <label><?php esc_html_e('Desde:', 'sorteo-sco'); ?></label>
+                        <input type="date" id="export_date_from" value="" />
+                        <label style="margin-left:20px;"><?php esc_html_e('Hasta:', 'sorteo-sco'); ?></label>
+                        <input type="date" id="export_date_to" value="" />
+                        <p class="description"><?php esc_html_e('Deja vacío para exportar todos los pedidos', 'sorteo-sco'); ?></p>
+                    </td>
+                </tr>
+
+                <tr>
+                    <th scope="row"><?php esc_html_e('Estados de Pedido', 'sorteo-sco'); ?></th>
+                    <td>
+                        <label><input type="checkbox" id="export_status_completed" value="completed" checked /> <?php esc_html_e('Completado', 'sorteo-sco'); ?></label><br>
+                        <label><input type="checkbox" id="export_status_processing" value="processing" checked /> <?php esc_html_e('Procesando', 'sorteo-sco'); ?></label><br>
+                        <label><input type="checkbox" id="export_status_pending" value="pending" /> <?php esc_html_e('Pendiente de Pago', 'sorteo-sco'); ?></label><br>
+                        <label><input type="checkbox" id="export_status_cancelled" value="cancelled" /> <?php esc_html_e('Cancelado', 'sorteo-sco'); ?></label>
+                    </td>
+                </tr>
+
+                <tr>
+                    <th scope="row"><?php esc_html_e('Opciones', 'sorteo-sco'); ?></th>
+                    <td>
+                        <label><input type="checkbox" id="export_show_duplicates" value="1" checked /> <?php esc_html_e('Mostrar advertencia de duplicados', 'sorteo-sco'); ?></label>
+                        <p class="description"><?php esc_html_e('Si está activado, marcará en rojo los productos que aparecen en múltiples paquetes en la misma venta', 'sorteo-sco'); ?></p>
+                    </td>
+                </tr>
+            </table>
+
+            <p>
+                <button type="button" id="btn-export-sales" class="button button-primary">
+                    <?php esc_html_e('Generar y Descargar CSV', 'sorteo-sco'); ?>
+                </button>
+                <span id="export-spinner" class="spinner" style="display:none;float:none;margin-top:5px;"></span>
+            </p>
+
+            <hr style="margin:30px 0;">
+
+            <h3><?php esc_html_e('Regenerar Productos Duplicados', 'sorteo-sco'); ?></h3>
+            <p><?php esc_html_e('Esta herramienta busca paquetes con productos duplicados (mismo SKU aparece múltiples veces) y los reemplaza por productos diferentes.', 'sorteo-sco'); ?></p>
+
+            <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:15px;margin:15px 0;">
+                <strong>⚠️ <?php esc_html_e('Advertencia:', 'sorteo-sco'); ?></strong>
+                <ul style="margin:10px 0 0 20px;">
+                    <li><?php esc_html_e('Solo procesa pedidos en estado "Procesando" o "Completado"', 'sorteo-sco'); ?></li>
+                    <li><?php esc_html_e('Genera una nota en cada pedido modificado', 'sorteo-sco'); ?></li>
+                    <li><?php esc_html_e('No afecta el stock (solo actualiza la composición del paquete)', 'sorteo-sco'); ?></li>
+                </ul>
+            </div>
+
+            <p>
+                <button type="button" id="btn-fix-duplicates" class="button button-secondary">
+                    <?php esc_html_e('🔄 Buscar y Regenerar Duplicados', 'sorteo-sco'); ?>
+                </button>
+                <span id="fix-spinner" class="spinner" style="display:none;float:none;margin-top:5px;"></span>
+            </p>
+
+            <div id="fix-result" style="margin-top:20px;"></div>
+            <div id="export-result" style="margin-top:20px;"></div>
+        </form>
+
+        <script>
+            jQuery(document).ready(function($) {
+                // Establecer fechas por defecto (últimos 30 días)
+                var today = new Date();
+                var thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+                $('#export_date_to').val(today.toISOString().split('T')[0]);
+                $('#export_date_from').val(thirtyDaysAgo.toISOString().split('T')[0]);
+
+                $('#btn-export-sales').on('click', function(e) {
+                    e.preventDefault();
+
+                    var $btn = $(this);
+                    var $spinner = $('#export-spinner');
+                    var $result = $('#export-result');
+
+                    $btn.prop('disabled', true);
+                    $spinner.show();
+                    $result.html('');
+
+                    var dateFrom = $('#export_date_from').val();
+                    var dateTo = $('#export_date_to').val();
+                    var statuses = [];
+
+                    $('input[id^="export_status_"]:checked').each(function() {
+                        statuses.push($(this).val());
+                    });
+
+                    var showDuplicates = $('#export_show_duplicates').is(':checked') ? 1 : 0;
+
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'sorteo_export_sales',
+                            nonce: '<?php echo wp_create_nonce('sorteo_export_sales'); ?>',
+                            date_from: dateFrom,
+                            date_to: dateTo,
+                            statuses: statuses,
+                            show_duplicates: showDuplicates
+                        },
+                        xhrFields: {
+                            responseType: 'blob'
+                        },
+                        success: function(response, status, xhr) {
+                            // Crear descarga
+                            var filename = 'export_ventas_' + new Date().toISOString().split('T')[0] + '.csv';
+                            var url = window.URL.createObjectURL(response);
+                            var a = document.createElement('a');
+                            a.href = url;
+                            a.download = filename;
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                            a.remove();
+
+                            $btn.prop('disabled', false);
+                            $spinner.hide();
+                            $result.html('<div class="notice notice-success is-dismissible"><p><?php esc_html_e('✓ Archivo descargado correctamente', 'sorteo-sco'); ?></p></div>');
+                        },
+                        error: function() {
+                            $btn.prop('disabled', false);
+                            $spinner.hide();
+                            $result.html('<div class="notice notice-error"><p><?php esc_html_e('Error al generar el archivo. Intenta de nuevo.', 'sorteo-sco'); ?></p></div>');
+                        }
+                    });
+                });
+
+                // Botón de regenerar duplicados
+                $('#btn-fix-duplicates').on('click', function(e) {
+                    e.preventDefault();
+
+                    if (!confirm('<?php esc_attr_e('¿Estás seguro de que deseas regenerar productos duplicados en paquetes? Esto modificará los pedidos existentes.', 'sorteo-sco'); ?>')) {
+                        return;
+                    }
+
+                    var $btn = $(this);
+                    var $spinner = $('#fix-spinner');
+                    var $result = $('#fix-result');
+
+                    $btn.prop('disabled', true);
+                    $spinner.show();
+                    $result.html('<div class="notice notice-info"><p><?php esc_html_e('🔍 Buscando paquetes con duplicados...', 'sorteo-sco'); ?></p></div>');
+
+                    var dateFrom = $('#export_date_from').val();
+                    var dateTo = $('#export_date_to').val();
+                    var statuses = [];
+
+                    $('input[id^="export_status_"]:checked').each(function() {
+                        statuses.push($(this).val());
+                    });
+
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'sorteo_fix_package_duplicates',
+                            nonce: '<?php echo wp_create_nonce('sorteo_fix_duplicates'); ?>',
+                            date_from: dateFrom,
+                            date_to: dateTo,
+                            statuses: statuses
+                        },
+                        success: function(response) {
+                            $btn.prop('disabled', false);
+                            $spinner.hide();
+
+                            if (response.success) {
+                                var data = response.data;
+                                var html = '<div class="notice notice-success"><p><strong>✓ ' + data.message + '</strong></p>';
+
+                                if (data.total_fixed > 0) {
+                                    html += '<h3>📋 Pedidos Modificados: ' + data.total_fixed + '</h3>';
+                                    html += '<table class="wp-list-table widefat striped" style="max-width:100%;">';
+                                    html += '<thead><tr>';
+                                    html += '<th>Pedido</th>';
+                                    html += '<th>Paquete</th>';
+                                    html += '<th>Duplicados Encontrados</th>';
+                                    html += '<th>Productos Reemplazados</th>';
+                                    html += '<th>Detalles</th>';
+                                    html += '</tr></thead><tbody>';
+
+                                    data.log.forEach(function(entry) {
+                                        html += '<tr>';
+                                        html += '<td><a href="post.php?post=' + entry.order_id + '&action=edit" target="_blank">#' + entry.order_number + '</a></td>';
+                                        html += '<td>' + entry.package_name + '</td>';
+                                        html += '<td>' + entry.duplicates_count + '</td>';
+                                        html += '<td>' + entry.replaced_count + '</td>';
+                                        html += '<td><ul style="margin:0;">';
+
+                                        entry.changes.forEach(function(change) {
+                                            html += '<li><strong>Reemplazado:</strong> ' + change.old_name + ' (SKU: ' + change.old_sku + ')<br>';
+                                            html += '<strong>Por:</strong> ' + change.new_name + ' (SKU: ' + change.new_sku + ')</li>';
+                                        });
+
+                                        html += '</ul></td>';
+                                        html += '</tr>';
+                                    });
+
+                                    html += '</tbody></table>';
+                                }
+
+                                html += '</div>';
+                                $result.html(html);
+                            } else {
+                                $result.html('<div class="notice notice-error"><p>' + response.data.message + '</p></div>');
+                            }
+                        },
+                        error: function() {
+                            $btn.prop('disabled', false);
+                            $spinner.hide();
+                            $result.html('<div class="notice notice-error"><p><?php esc_html_e('Error al procesar la solicitud.', 'sorteo-sco'); ?></p></div>');
                         }
                     });
                 });
@@ -1391,7 +1630,7 @@ class Sorteo_WC_Extra
         $reservations = array();
         if ($table_exists) {
             $reservations = $wpdb->get_results(
-                "SELECT CONCAT(rs.order_id, '-', rs.product_id) as id, rs.product_id, rs.order_id, rs.expires
+                "SELECT CONCAT(rs.order_id, '-', rs.product_id) as id, rs.product_id, rs.order_id, rs.expires, rs.stock_quantity
                  FROM {$table} rs
                  ORDER BY rs.expires ASC",
                 ARRAY_A
@@ -1417,6 +1656,14 @@ class Sorteo_WC_Extra
                     $quantity = $item->get_quantity();
                     break;
                 }
+            }
+
+            if ($quantity <= 0) {
+                $quantity = isset($res['stock_quantity']) ? (int) $res['stock_quantity'] : 0;
+            }
+
+            if ($quantity <= 0) {
+                continue;
             }
 
             // Fecha de reserva = fecha del pedido
@@ -1474,7 +1721,8 @@ class Sorteo_WC_Extra
 
         // 2) Reservas en carrito (transient bootstrap_theme_stock_reservations) para mostrar componentes + sueltos
         $transient_reservations = get_transient('bootstrap_theme_stock_reservations') ?: array();
-        $transient_expiry = 30 * MINUTE_IN_SECONDS; // alineado con el tema
+        $transient_expiry = 5 * MINUTE_IN_SECONDS; // 5 minutos
+        $transient_changed = false;
 
         foreach ($transient_reservations as $session_id => $items) {
             foreach ($items as $product_id => $entry) {
@@ -1485,6 +1733,11 @@ class Sorteo_WC_Extra
 
                 $quantity = isset($entry['quantity']) ? (int) $entry['quantity'] : 0;
                 if ($quantity <= 0) {
+                    unset($transient_reservations[$session_id][$product_id]);
+                    if (empty($transient_reservations[$session_id])) {
+                        unset($transient_reservations[$session_id]);
+                    }
+                    $transient_changed = true;
                     continue;
                 }
 
@@ -1526,6 +1779,10 @@ class Sorteo_WC_Extra
                     'expired' => $expired
                 );
             }
+        }
+
+        if ($transient_changed) {
+            set_transient('bootstrap_theme_stock_reservations', $transient_reservations, 5 * MINUTE_IN_SECONDS);
         }
 
         wp_send_json_success($data);
@@ -1574,7 +1831,7 @@ class Sorteo_WC_Extra
                     if (empty($reservations[$session_id])) {
                         unset($reservations[$session_id]);
                     }
-                    set_transient('bootstrap_theme_stock_reservations', $reservations, 30 * MINUTE_IN_SECONDS);
+                    set_transient('bootstrap_theme_stock_reservations', $reservations, 5 * MINUTE_IN_SECONDS);
                 }
 
                 wp_send_json_success(['message' => __('Reserva liberada.', 'sorteo-sco')]);
@@ -1731,6 +1988,506 @@ class Sorteo_WC_Extra
             'restored' => $restored,
             'already_managing' => $already_managing
         ]);
+    }
+
+    /**
+     * Exportar ventas con desglose de paquetes y detección de duplicados
+     */
+    public function ajax_export_sales()
+    {
+        check_ajax_referer('sorteo_export_sales', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Permiso denegado', 'sorteo-sco')]);
+        }
+
+        $date_from = isset($_POST['date_from']) ? sanitize_text_field($_POST['date_from']) : '';
+        $date_to = isset($_POST['date_to']) ? sanitize_text_field($_POST['date_to']) : '';
+        $statuses = isset($_POST['statuses']) ? array_map('sanitize_text_field', $_POST['statuses']) : array('completed', 'processing');
+        $show_duplicates = isset($_POST['show_duplicates']) ? intval($_POST['show_duplicates']) : 1;
+
+        // Construir query
+        $args = array(
+            'limit' => -1,
+            'return' => 'ids',
+        );
+
+        if (!empty($statuses)) {
+            $args['status'] = $statuses;
+        }
+
+        // Filtrar por rango de fechas
+        if (!empty($date_from) && !empty($date_to)) {
+            $args['date_created'] = date('Y-m-d', strtotime($date_from)) . '...' . date('Y-m-d', strtotime($date_to));
+        } elseif (!empty($date_from)) {
+            $args['date_created'] = '>=' . date('Y-m-d 00:00:00', strtotime($date_from));
+        } elseif (!empty($date_to)) {
+            $args['date_created'] = '<=' . date('Y-m-d 23:59:59', strtotime($date_to));
+        }
+
+        $order_ids = wc_get_orders($args);
+
+        // PRIMER PASADA: Contar cuántas veces aparece cada SKU a través de TODOS los pedidos
+        $global_sku_count = array();
+
+        foreach ($order_ids as $order_id) {
+            $order = wc_get_order($order_id);
+            if (!$order) continue;
+
+            foreach ($order->get_items() as $item) {
+                $product = $item->get_product();
+                if (!$product) continue;
+
+                if ($product->get_type() === 'sco_package') {
+                    $pkg = $item->get_meta('_sco_package', true);
+
+                    if (!empty($pkg) && isset($pkg['components'])) {
+                        foreach ($pkg['components'] as $component) {
+                            $comp_product_id = (int) $component['product_id'];
+                            $comp_product = wc_get_product($comp_product_id);
+
+                            if (!$comp_product) continue;
+
+                            $comp_sku = $comp_product->get_sku();
+
+                            if (!isset($global_sku_count[$comp_sku])) {
+                                $global_sku_count[$comp_sku] = 0;
+                            }
+
+                            $global_sku_count[$comp_sku]++;
+                        }
+                    }
+                } else {
+                    $sku = $product->get_sku();
+
+                    if (!isset($global_sku_count[$sku])) {
+                        $global_sku_count[$sku] = 0;
+                    }
+
+                    $global_sku_count[$sku]++;
+                }
+            }
+        }
+
+        // SEGUNDA PASADA: Generar filas y marcar duplicados según conteo global
+        $rows = array();
+
+        foreach ($order_ids as $order_id) {
+            $order = wc_get_order($order_id);
+            if (!$order) continue;
+
+            foreach ($order->get_items() as $item) {
+                $product = $item->get_product();
+                if (!$product) continue;
+
+                if ($product->get_type() === 'sco_package') {
+                    $pkg = $item->get_meta('_sco_package', true);
+                    $pkg_name = $product->get_name();
+
+                    if (!empty($pkg) && isset($pkg['components'])) {
+                        foreach ($pkg['components'] as $component) {
+                            $comp_product_id = (int) $component['product_id'];
+                            $comp_product = wc_get_product($comp_product_id);
+
+                            if (!$comp_product) continue;
+
+                            $comp_sku = $comp_product->get_sku();
+                            $is_duplicate = isset($global_sku_count[$comp_sku]) && $global_sku_count[$comp_sku] > 1;
+
+                            $rows[] = array(
+                                'order_id' => $order->get_order_number(),
+                                'order_date' => $order->get_date_created()->date_i18n('d/m/Y H:i'),
+                                'customer' => $order->get_formatted_billing_full_name(),
+                                'email' => $order->get_billing_email(),
+                                'product_name' => $comp_product->get_name(),
+                                'product_id' => $comp_product_id,
+                                'product_sku' => $comp_sku,
+                                'quantity' => 1,
+                                'price' => $comp_product->get_price(),
+                                'source' => 'Paquete: ' . $pkg_name,
+                                'is_duplicate' => $is_duplicate ? '⚠️ SÍ' : 'No',
+                            );
+                        }
+                    }
+                } else {
+                    $product_id = $product->get_id();
+                    $sku = $product->get_sku();
+
+                    $is_duplicate = isset($global_sku_count[$sku]) && $global_sku_count[$sku] > 1;
+
+                    $rows[] = array(
+                        'order_id' => $order->get_order_number(),
+                        'order_date' => $order->get_date_created()->date_i18n('d/m/Y H:i'),
+                        'customer' => $order->get_formatted_billing_full_name(),
+                        'email' => $order->get_billing_email(),
+                        'product_name' => $product->get_name(),
+                        'product_id' => $product_id,
+                        'product_sku' => $sku,
+                        'quantity' => $item->get_quantity(),
+                        'price' => $product->get_price(),
+                        'source' => 'Venta directa',
+                        'is_duplicate' => $is_duplicate ? '⚠️ SÍ' : 'No',
+                    );
+                }
+            }
+        }
+
+        // Generar CSV
+        $csv_headers = array(
+            'Pedido',
+            'Fecha',
+            'Cliente',
+            'Email',
+            'Producto',
+            'ID Producto',
+            'SKU',
+            'Cantidad',
+            'Precio Unitario',
+            'Origen',
+            'Duplicado' . ($show_duplicates ? '' : ''),
+        );
+
+        $output = fopen('php://memory', 'w');
+        fprintf($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); // BOM para UTF-8
+        fputcsv($output, $csv_headers);
+
+        foreach ($rows as $row) {
+            fputcsv($output, $row);
+        }
+
+        rewind($output);
+        $csv_content = stream_get_contents($output);
+        fclose($output);
+
+        // Enviar como descarga
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="export_ventas_' . date('Y-m-d') . '.csv"');
+        header('Content-Length: ' . strlen($csv_content));
+
+        echo $csv_content;
+        wp_die();
+    }
+
+    /**
+     * AJAX: Buscar y regenerar productos duplicados en paquetes
+     */
+    public function ajax_fix_package_duplicates()
+    {
+        check_ajax_referer('sorteo_fix_duplicates', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('No autorizado', 'sorteo-sco')]);
+        }
+
+        try {
+
+            $date_from = isset($_POST['date_from']) ? sanitize_text_field($_POST['date_from']) : '';
+            $date_to = isset($_POST['date_to']) ? sanitize_text_field($_POST['date_to']) : '';
+            $statuses = isset($_POST['statuses']) ? array_map('sanitize_text_field', (array) $_POST['statuses']) : ['processing', 'completed'];
+
+            // Usar WP_Query directamente para mejor control de fechas
+            $query_args = array(
+                'post_type' => 'shop_order',
+                'posts_per_page' => -1,
+                'post_status' => array_map(function ($s) {
+                    return 'wc-' . $s;
+                }, $statuses),
+                'orderby' => 'date',
+                'order' => 'DESC',
+            );
+
+            // Agregar filtros de fecha
+            if (!empty($date_from) || !empty($date_to)) {
+                $date_query = array();
+                if (!empty($date_from)) {
+                    $date_query[] = array(
+                        'after' => $date_from . ' 00:00:00',
+                        'inclusive' => true,
+                    );
+                }
+                if (!empty($date_to)) {
+                    $date_query[] = array(
+                        'before' => $date_to . ' 23:59:59',
+                        'inclusive' => true,
+                    );
+                }
+                if (!empty($date_query)) {
+                    $query_args['date_query'] = $date_query;
+                }
+            }
+
+            $query = new WP_Query($query_args);
+            $order_ids = $query->posts;
+            $orders = array();
+
+            foreach ($order_ids as $post) {
+                $order = wc_get_order($post->ID);
+                if ($order) {
+                    $orders[] = $order;
+                }
+            }
+
+            // PRIMERA PASADA: Contar SKUs GLOBALMENTE en todos los pedidos
+            $global_sku_count = array();
+            $sku_locations = array(); // Map de SKU => [{'order_id', 'order_number', 'item_id', 'comp_index', 'product', ...}]
+
+            foreach ($orders as $order) {
+                $order_id = $order->get_id();
+                $order_number = $order->get_order_number();
+
+                foreach ($order->get_items() as $item_id => $item) {
+                    $product = $item->get_product();
+                    if (!$product || $product->get_type() !== 'sco_package') {
+                        continue;
+                    }
+
+                    $pkg = $item->get_meta('_sco_package', true);
+                    if (empty($pkg) || empty($pkg['components'])) {
+                        continue;
+                    }
+
+                    foreach ($pkg['components'] as $comp_index => $comp) {
+                        $comp_product_id = (int) $comp['product_id'];
+                        $comp_product = wc_get_product($comp_product_id);
+
+                        if (!$comp_product) {
+                            continue;
+                        }
+
+                        $sku = $comp_product->get_sku();
+                        if (empty($sku)) {
+                            $sku = 'product_' . $comp_product_id;
+                        }
+
+                        if (!isset($global_sku_count[$sku])) {
+                            $global_sku_count[$sku] = 0;
+                            $sku_locations[$sku] = array();
+                        }
+
+                        $global_sku_count[$sku]++;
+                        $sku_locations[$sku][] = array(
+                            'order' => $order,
+                            'order_id' => $order_id,
+                            'order_number' => $order_number,
+                            'item_id' => $item_id,
+                            'item' => $item,
+                            'package_product' => $product,
+                            'comp_index' => $comp_index,
+                            'comp_product_id' => $comp_product_id,
+                            'comp_product' => $comp_product,
+                        );
+                    }
+                }
+            }
+
+            // Encontrar SKUs que aparecen múltiples veces GLOBALMENTE
+            $duplicate_skus = array_filter($global_sku_count, function ($count) {
+                return $count > 1;
+            });
+
+            if (empty($duplicate_skus)) {
+                wp_send_json_success([
+                    'message' => __('No se encontraron productos duplicados en los pedidos seleccionados.', 'sorteo-sco'),
+                    'total_fixed' => 0,
+                    'log' => []
+                ]);
+                return;
+            }
+
+            // SEGUNDA PASADA: Regenerar instancias extras de duplicados
+            $log = array();
+            $total_fixed = 0;
+            $processed_orders = array(); // Track de órdenes ya guardadas
+
+            foreach ($duplicate_skus as $dup_sku => $global_count) {
+                $locations = $sku_locations[$dup_sku];
+
+                // Mantener la PRIMERA instancia, reemplazar las demás
+                for ($i = 1; $i < count($locations); $i++) {
+                    $loc = $locations[$i];
+                    $order = $loc['order'];
+                    $order_id = $loc['order_id'];
+                    $order_number = $loc['order_number'];
+                    $item_id = $loc['item_id'];
+                    $item = $loc['item'];
+                    $comp_index = $loc['comp_index'];
+                    $package_product = $loc['package_product'];
+                    $comp_product = $loc['comp_product'];
+
+                    // Obtener el paquete completo
+                    $pkg = $item->get_meta('_sco_package', true);
+                    if (empty($pkg) || empty($pkg['components'])) {
+                        continue;
+                    }
+
+                    // Buscar reemplazo que NO sea duplicado
+                    $mode = get_post_meta($package_product->get_id(), '_sco_pkg_mode', true) ?: 'random';
+                    $skus_to_exclude = array_keys($duplicate_skus); // Excluir todos los SKUs duplicados
+
+                    $replacement = $this->find_replacement_product(
+                        $package_product->get_id(),
+                        $mode,
+                        $skus_to_exclude
+                    );
+
+                    if ($replacement) {
+                        $new_product = wc_get_product($replacement);
+                        $old_name = $comp_product->get_name();
+                        $old_sku = $dup_sku;
+
+                        // Actualizar el componente
+                        $pkg['components'][$comp_index] = array(
+                            'product_id' => $replacement,
+                            'qty' => 1
+                        );
+
+                        $item->update_meta_data('_sco_package', $pkg);
+                        $item->save();
+
+                        // Agregar nota al pedido (una sola vez por pedido)
+                        $note = sprintf(
+                            __('Duplicado regenerado - %s (SKU: %s) reemplazado por %s (SKU: %s) en paquete "%s"', 'sorteo-sco'),
+                            $old_name,
+                            $old_sku,
+                            $new_product->get_name(),
+                            $new_product->get_sku(),
+                            $package_product->get_name()
+                        );
+                        $order->add_order_note($note);
+
+                        // Guardar la orden solo una vez al final
+                        if (!isset($processed_orders[$order_id])) {
+                            $processed_orders[$order_id] = true;
+                        }
+
+                        $log[] = array(
+                            'order_id' => $order_id,
+                            'order_number' => $order_number,
+                            'package_name' => $package_product->get_name(),
+                            'duplicates_count' => $global_count,
+                            'replaced_count' => 1,
+                            'changes' => array(
+                                array(
+                                    'old_id' => $comp_product->get_id(),
+                                    'old_name' => $old_name,
+                                    'old_sku' => $old_sku,
+                                    'new_id' => $replacement,
+                                    'new_name' => $new_product->get_name(),
+                                    'new_sku' => $new_product->get_sku()
+                                )
+                            )
+                        );
+
+                        $total_fixed++;
+                    }
+                }
+            }
+
+            // Guardar todas las órdenes procesadas
+            foreach ($processed_orders as $order_id => $true) {
+                $order = wc_get_order($order_id);
+                if ($order) {
+                    $order->save();
+                }
+            }
+
+            if ($total_fixed > 0) {
+                wp_send_json_success([
+                    'message' => sprintf(
+                        __('Se regeneraron %d producto(s) duplicado(s) en %d pedido(s).', 'sorteo-sco'),
+                        $total_fixed,
+                        count($processed_orders)
+                    ),
+                    'total_fixed' => $total_fixed,
+                    'log' => $log
+                ]);
+            } else {
+                wp_send_json_success([
+                    'message' => __('No se encontraron productos duplicados para regenerar.', 'sorteo-sco'),
+                    'total_fixed' => 0,
+                    'log' => []
+                ]);
+            }
+        } catch (Exception $e) {
+            error_log('Sorteo SCO - Error en ajax_fix_package_duplicates: ' . $e->getMessage());
+            wp_send_json_error([
+                'message' => __('Error: ', 'sorteo-sco') . $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Buscar producto de reemplazo para evitar duplicados
+     */
+    private function find_replacement_product($package_id, $mode, $exclude_skus)
+    {
+        if ($mode === 'manual') {
+            // Obtener productos del paquete manual
+            $csv = (string) get_post_meta($package_id, '_sco_pkg_products', true);
+            $product_ids = array_filter(array_map('intval', explode(',', $csv)));
+        } else {
+            // Obtener categorías del paquete random
+            $cat_csv = get_post_meta($package_id, '_sco_pkg_categories', true);
+            $cat_ids = $cat_csv ? array_map('intval', explode(',', $cat_csv)) : array();
+
+            if (empty($cat_ids)) {
+                return null;
+            }
+
+            // Buscar productos en las categorías
+            $args = array(
+                'post_type' => 'product',
+                'posts_per_page' => 100,
+                'post_status' => 'publish',
+                'orderby' => 'rand',
+                'tax_query' => array(
+                    array(
+                        'taxonomy' => 'product_cat',
+                        'field' => 'term_id',
+                        'terms' => $cat_ids,
+                    )
+                ),
+                'meta_query' => array(
+                    array(
+                        'key' => '_stock_status',
+                        'value' => 'instock'
+                    )
+                )
+            );
+
+            $products = get_posts($args);
+            $product_ids = wp_list_pluck($products, 'ID');
+        }
+
+        if (empty($product_ids)) {
+            return null;
+        }
+
+        // Filtrar productos por SKU excluido
+        foreach ($product_ids as $pid) {
+            $p = wc_get_product($pid);
+            if (!$p || !$p->is_purchasable() || $p->is_type('variable')) {
+                continue;
+            }
+
+            $sku = $p->get_sku();
+            if (empty($sku)) {
+                $sku = 'product_' . $pid; // Fallback
+            }
+
+            if (in_array($sku, $exclude_skus)) {
+                continue; // Skip productos con SKU excluido
+            }
+
+            // Verificar stock
+            if (!$p->is_in_stock()) {
+                continue;
+            }
+
+            return $pid; // Producto encontrado
+        }
+
+        return null; // No se encontró reemplazo
     }
 }
 

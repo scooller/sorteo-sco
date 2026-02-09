@@ -176,68 +176,31 @@ class Sorteo_Theme_Compat
             </div>
         <?php
         } else {
-            // Versión HTML nativo con select y AJAX
+            // Versión HTML simple con POST directo (sin AJAX)
+            $current_url = remove_query_arg('add-to-cart');
         ?>
-            <form class="sco-package-add-to-cart-form" method="post" enctype="multipart/form-data">
+            <form class="sco-package-add-to-cart-form cart" method="post" enctype="multipart/form-data" action="<?php echo esc_url($current_url); ?>">
                 <div class="quantity-selector">
                     <div class="col d-flex">
                         <label for="sco_qty_<?php echo esc_attr($product_id); ?>" style="width:60%;margin-bottom:5px;">
                             <?php echo esc_html__('Cantidad:', 'sorteo-sco'); ?>
                         </label>
-                        <select name="quantity" id="sco_qty_<?php echo esc_attr($product_id); ?>" class="sco-qty-select" style="width:40%;margin-right:10px;--wp--preset--spacing--16: 5px;">
+                        <select name="quantity" id="sco_qty_<?php echo esc_attr($product_id); ?>" class="qty sco-qty-select" style="width:40%;margin-right:10px;--wp--preset--spacing--16: 5px;">
                             <?php for ($q = 1; $q <= $max_qty; $q++): ?>
                                 <option value="<?php echo esc_attr($q); ?>"><?php echo esc_html($q); ?></option>
                             <?php endfor; ?>
                         </select>
                     </div>
                     <div class="col">
-                        <button type="button"
-                            class="button add_to_cart_button sco_add_to_cart_btn wp-block-button__link"
-                            data-product_id="<?php echo esc_attr($product_id); ?>"
-                            data-product_type="sco_package">
+                        <button type="submit"
+                            name="add-to-cart"
+                            value="<?php echo esc_attr($product_id); ?>"
+                            class="button single_add_to_cart_button wp-block-button__link">
                             <i class="fa-solid fa-cart-plus"></i> <?php echo esc_html__('Agregar', 'sorteo-sco'); ?>
                         </button>
                     </div>
                 </div>
             </form>
-            <script>
-                (function($) {
-                    $(document).ready(function() {
-                        $('.sco_add_to_cart_btn[data-product_id="<?php echo esc_js($product_id); ?>"]').on('click', function(e) {
-                            e.preventDefault();
-
-                            var $btn = $(this);
-                            var $select = $('#sco_qty_<?php echo esc_js($product_id); ?>');
-                            var qty = $select.val();
-                            var productId = $btn.data('product_id');
-
-                            // Deshabilitar botón
-                            $btn.prop('disabled', true).addClass('loading');
-
-                            // Agregar vía URL nativa de WooCommerce (más compatible)
-                            var cartUrl = '<?php echo esc_url(wc_get_cart_url()); ?>?add-to-cart=' + productId + '&quantity=' + qty;
-
-                            $.get(cartUrl, function(response) {
-                                // Actualizar fragmentos del carrito
-                                $(document.body).trigger('wc_fragment_refresh');
-                                $(document.body).trigger('added_to_cart', [null, null, $btn]);
-
-                                // Feedback visual
-                                $btn.removeClass('loading').addClass('added');
-                                var originalHtml = $btn.html();
-                                $btn.html('<i class="fa-solid fa-check"></i> <?php echo esc_js(__('¡Agregado!', 'sorteo-sco')); ?>');
-
-                                setTimeout(function() {
-                                    $btn.removeClass('added').html(originalHtml).prop('disabled', false);
-                                }, 2000);
-                            }).fail(function() {
-                                $btn.removeClass('loading').prop('disabled', false);
-                                alert('<?php echo esc_js(__('Error al agregar al carrito', 'sorteo-sco')); ?>');
-                            });
-                        });
-                    });
-                })(jQuery);
-            </script>
         <?php
         }
 

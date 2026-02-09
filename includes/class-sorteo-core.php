@@ -1128,9 +1128,10 @@ class Sorteo_SCO_Core
 
 		if (!empty($user_email)) {
 			// Buscar pedidos recientes (últimas 2 horas) con este email que sean ganadores
+			$two_hours_ago = date('Y-m-d H:i:s', time() - 7200);
 			$recent_orders = wc_get_orders(array(
 				'billing_email' => $user_email,
-				'date_created' => '>' . (time() - 7200), // Últimas 2 horas
+				'date_created' => '>=' . $two_hours_ago,
 				'limit' => 5,
 				'orderby' => 'date',
 				'order' => 'DESC'

@@ -2,7 +2,7 @@
 /*
 Plugin Name: Sorteo
 Description: Plugin para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas y marcos visuales en WooCommerce.
-Version: 1.9.20
+Version: 1.9.28
 Author: scooller
 Author URI: https://scooller.bio
 Plugin URI: https://scooller.bio
@@ -22,7 +22,7 @@ add_action('before_woocommerce_init', function () {
 });
 
 // Definir constantes del plugin
-define('SORTEO_SCO_VERSION', '1.9.20');
+define('SORTEO_SCO_VERSION', '1.9.28');
 define('SORTEO_SCO_PLUGIN_FILE', __FILE__);
 define('SORTEO_SCO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SORTEO_SCO_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -179,40 +179,116 @@ function sorteo_sco_manage_stock_on_order_complete($order_id, $order = null)
  * Reservar stock cuando se crea el pedido (prevenir race conditions)
  * WooCommerce maneja esto nativamente con wc_reserve_stock_for_order()
  */
-function sorteo_sco_reserve_stock_on_checkout($order_id)
+function sorteo_sco_reserve_stock_on_checkout($order)
 {
-	$order = wc_get_order($order_id);
-	if (!$order) {
-		return;
-	}
+	try {
+		// Obtener el order_id primero
+		if ($order instanceof WC_Order) {
+			$order_id = $order->get_id();
+		} else {
+			$order_id = $order;
+			$order = wc_get_order($order_id);
+		}
 
-	// WooCommerce ya maneja reserva de stock nativamente desde v3.5+
-	// Esta función es un backup por si el tema/plugin lo desactiva
-	$reserve_enabled = get_option('sorteo_wc_enable_stock_reservation', '1');
-	if ($reserve_enabled !== '1') {
-		return;
-	}
+		if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+			error_log("=== SCO RESERVE STOCK START === Order: $order_id");
+		}
 
-	// Verificar si WooCommerce ya reservó el stock
-	$stock_reserved = $order->get_meta('_stock_reserved', true);
-	if ($stock_reserved === 'yes') {
-		return;
-	}
+		if (!$order) {
+			if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+				error_log("SCO Reserve: Order #$order_id not found");
+			}
+			return;
+		}
 
-	// Usar función nativa de WooCommerce si está disponible
-	if (function_exists('wc_reserve_stock_for_order')) {
-		try {
+		$blocked_reason = '';
+		if (function_exists('WC') && WC()->session) {
+			$blocked_reason = (string) WC()->session->get('sco_pkg_checkout_blocked');
+			if ($blocked_reason !== '') {
+				if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+					error_log("SCO Reserve: Skipping reservation due to checkout block ($blocked_reason) for order #$order_id");
+				}
+				WC()->session->set('sco_pkg_checkout_blocked', '');
+				return;
+			}
+		}
+
+		// WooCommerce ya maneja reserva de stock nativamente desde v3.5+
+		// Esta función es un backup por si el tema/plugin lo desactiva
+		$reserve_enabled = get_option('sorteo_wc_enable_stock_reservation', '1');
+		if ($reserve_enabled !== '1') {
+			if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+				error_log("SCO Reserve: Stock reservation disabled in settings");
+			}
+			return;
+		}
+
+		// Verificar si WooCommerce ya reservó el stock
+		$stock_reserved = $order->get_meta('_stock_reserved', true);
+		if ($stock_reserved === 'yes') {
+			if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+				error_log("SCO Reserve: Stock already reserved for order #$order_id");
+			}
+			return;
+		}
+
+		// Verificar si la orden contiene paquetes
+		$has_packages = false;
+		foreach ($order->get_items() as $item) {
+			$product = $item->get_product();
+			if ($product && $product->get_type() === 'sco_package') {
+				$has_packages = true;
+				break;
+			}
+		}
+
+		if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+			error_log("SCO Reserve: Order contains packages: " . ($has_packages ? 'yes' : 'no'));
+		}
+
+		// Solo reservar stock si hay paquetes o si WooCommerce no lo hizo automáticamente
+		if (function_exists('wc_reserve_stock_for_order')) {
+			// Si NO hay paquetes, dejar que WooCommerce maneje la reserva nativamente
+			if (!$has_packages) {
+				if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+					error_log("SCO Reserve: Skipping reservation - no packages in order, WooCommerce will handle it");
+				}
+				return;
+			}
+
+			if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+				error_log("SCO Reserve: Calling wc_reserve_stock_for_order() for package order");
+			}
+
 			wc_reserve_stock_for_order($order);
 
 			// Reservar también los componentes de paquetes que no están como line items
 			if (function_exists('sco_pkg_reserve_components_for_order')) {
+				if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+					error_log("SCO Reserve: Calling sco_pkg_reserve_components_for_order()");
+				}
 				sco_pkg_reserve_components_for_order($order);
 			}
+
 			$order->update_meta_data('_stock_reserved', 'yes');
 			$order->save();
-		} catch (Exception $e) {
-			error_log('Sorteo SCO: ERROR al reservar stock - ' . $e->getMessage());
+
+			if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+				error_log("=== SCO RESERVE STOCK END - SUCCESS === Order: $order_id");
+			}
+		} else {
+			if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+				error_log("SCO Reserve: wc_reserve_stock_for_order() function not available");
+			}
 		}
+	} catch (Exception $e) {
+		if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+			error_log('SCO Reserve FATAL ERROR: ' . $e->getMessage());
+			error_log('SCO Reserve STACK TRACE: ' . $e->getTraceAsString());
+			error_log('=== SCO RESERVE STOCK END - FAILED === Order: ' . $order_id);
+		}
+		// NO re-lanzar el error para no bloquear el checkout
+		// El pedido se procesará aunque la reserva falle
 	}
 }
 

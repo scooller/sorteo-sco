@@ -1,7 +1,235 @@
 # 📋 Changelog - Plugin Sorteo SCO
 
-**Autor**: scooller  
-**Última actualización**: 2026-01-04
+**Autor**: scooller
+**Última actualización**: 2026-02-05
+
+---
+
+## [1.9.28] - 2026-02-05
+
+### 🐛 Bugfix Crítico
+
+**Fix de NetworkError en Store API para productos individuales (cart.js)**:
+
+**Problema**: Al agregar productos individuales (no paquetes) al carrito, se producía un `TypeError: NetworkError when attempting to fetch resource` en `cart.js`. Los paquetes (`sco_package`) funcionaban correctamente.
+
+**Causa raíz**: La función `sco_pkg_sync_reservations_with_cart()` llamaba a `WC()->session->get_session_id()` sin verificar que el método existiera. `WC_Session_Handler` de WooCommerce **NO** tiene este método. Cuando `get_customer_id()` retornaba vacío (posible en contexto Store API/REST), se producía un fatal error PHP que mataba la respuesta HTTP, causando el NetworkError en el `fetch()` del cliente.
+
+**Por qué solo afectaba productos individuales**: Los `sco_package` son productos virtuales (`is_virtual()` retorna `true`), por lo que el control de stock del tema los omite completamente. Los productos individuales con gestión de stock sí pasan por las rutas de Store API que ejecutan `woocommerce_before_calculate_totals`, disparando `sco_pkg_sync_reservations_with_cart()`.
+
+**Correcciones aplicadas** (`class-sorteo-package-simple.php`):
+
+1. **`sco_pkg_sync_reservations_with_cart()`**: Reemplazada llamada directa a `get_session_id()` por cadena de fallback segura con `method_exists()` y `property_exists()`
+2. **`sco_pkg_hpos_bypass_stock_check()`**: Agregada verificación de `WC()->cart` nulo antes de llamar `is_empty()`
+3. **`sco_pkg_get_reserved_by_others()`**: Agregado guard para contextos REST API donde la sesión no está disponible
+4. **`sco_pkg_adjust_stock_for_current_user()`**: Agregado guard para contextos REST API donde la sesión no está disponible
+5. **`sco_package_validate_duplicate_in_cart()`**: Agregada verificación de `WC()->cart` nulo antes de acceder al carrito
+
+**Impacto**:
+- Eliminación del NetworkError al agregar productos individuales al carrito
+- Mayor robustez en contextos Store API/REST donde la sesión WooCommerce puede no estar inicializada
+- Sin cambios funcionales: los 4 niveles de protección contra duplicados de v1.9.27 se mantienen intactos
+
+---
+
+## [1.9.27] - 2026-02-05
+
+### 🐛 Bugfix Crítico
+
+**Prevención de productos duplicados entre pedidos (cross-order)**:
+
+**Problema**: Productos (stickers) se asignaban a múltiples pedidos de distintos clientes. El sistema solo verificaba duplicados dentro del mismo carrito, pero no contra pedidos existentes ni carritos de otros usuarios.
+
+**Causa raíz**: Entre que un usuario agrega un paquete al carrito y el stock se reduce (al pasar a `processing`/`completed`), el producto sigue como `instock` y otro usuario puede recibirlo en su paquete.
+
+**Solución implementada - 4 capas de protección**:
+
+1. **Nueva función `sco_pkg_get_committed_product_ids()`** (`class-sorteo-package-simple.php`):
+   - Consulta SQL (compatible HPOS) que obtiene TODOS los productos ya comprometidos desde 3 fuentes:
+     - Ventas directas: `_product_id` de order items en pedidos activos
+     - Componentes de paquetes: `_sco_package` meta deserializado de pedidos activos
+     - Carritos de otros usuarios: transient `bootstrap_theme_stock_reservations` (siempre activo, independiente de config)
+   - Cache por request via variable estática con reset manual
+   - Pedidos consultados: `pending`, `processing`, `on-hold`, `completed`
+
+2. **Modificación de `sco_package_generate_composition()`**:
+   - Modo manual y random ahora excluyen productos comprometidos via `isset($committed_ids[$pid])`
+   - Nuevo contador `committed` en exclusiones de modo random
+   - Log actualizado con `committed_skip`
+
+3. **Modificación de `sco_package_generate_composition_excluding_products()`**:
+   - Misma lógica de exclusión aplicada en ambos modos
+
+4. **Nueva validación en `sco_pkg_checkout_validation()`**:
+   - Red de seguridad final: al momento de pagar, verifica que los productos del carrito no estén comprometidos en otros pedidos
+   - Bloquea checkout con mensaje claro si detecta conflicto
+   - Indica al cliente que elimine el paquete y lo agregue de nuevo
+
+**Impacto**:
+- Eliminación de duplicados entre pedidos distintos
+- Protección en todas las fases: carrito, generación de composición, y checkout
+- Funciona independiente de la configuración de "Reserva de Stock"
+
+---
+
+## [1.9.26] - 2026-02-05
+
+### ⚡ Optimización
+
+**Mejoras en Sistema de Reservas de Stock para Paquetes**:
+- ✅ **Fix en modo random**: Corregido uso de variable `$reserved_skipped` que no se actualizaba correctamente
+  - Ahora usa `$excluded_counts['reserved']` que se incrementa durante la validación
+  - Los logs ahora muestran correctamente cuántos productos fueron excluidos por estar reservados
+- ✅ **Mejora en función `sco_pkg_is_reserved_by_others_blocking()`**: 
+  - Ahora **siempre** verifica reservas de otros usuarios durante add-to-cart
+  - Previene race conditions donde dos usuarios podrían agregar el mismo producto reservado
+  - Lógica simplificada y más robusta para productos con/sin gestión de stock
+- ✅ **Mayor eficiencia**: Los logs muestran información precisa de exclusiones
+  - Ejemplo: `SCO RANDOM EXCLUSIONS - Reserved: 6` refleja exactamente 6 productos reservados
+  - `SORTEO SCO: skipped=6` muestra el conteo correcto en el log final
+
+**Impacto**:
+- 🛡️ Mayor protección contra conflictos de stock en ventas concurrentes
+- 📊 Mejor visibilidad del estado de reservas en los logs
+- 🎯 Selección más precisa de productos disponibles para paquetes
+
+---
+
+## [1.9.25] - 2026-02-03
+
+### 🐛 Bugfix
+
+**Fix Error Handler en Regenerador de Duplicados**:
+- ✅ Completado try-catch wrapper en función `ajax_fix_package_duplicates()`
+- ✅ Ahora captura excepciones y muestra mensajes de error específicos
+- ✅ Mejora en logging con `error_log()` para debugging
+- ✅ Reemplaza error genérico "Error al procesar la solicitud" con descripciones detalladas
+- 🔧 Añadido proper error handling: `} catch (Exception $e) { ... wp_send_json_error() }`
+
+---
+
+## [1.9.24] - 2026-02-03
+
+### 🆕 Nueva Herramienta
+
+**Regenerar Productos Duplicados en Paquetes**:
+- 🔄 Nueva funcionalidad en pestaña "Extra WooCommerce" → "Exportar Ventas"
+- 🔍 **Detección inteligente**: Busca paquetes con productos duplicados (mismo SKU aparece múltiples veces)
+- 🔧 **Regeneración automática**: Reemplaza duplicados por productos diferentes
+  - Para paquetes manuales: selecciona de la lista de productos del paquete
+  - Para paquetes random: selecciona de las categorías configuradas
+  - Garantiza que el reemplazo NO sea duplicado
+- 📝 **Notas en pedido**: Agrega nota detallada con todos los cambios realizados
+- 📊 **Log detallado**: Muestra tabla con:
+  - Pedido modificado
+  - Nombre del paquete
+  - Cantidad de duplicados encontrados
+  - Productos reemplazados con detalles (nombre y SKU antes/después)
+- 🎯 **Filtrado**: Respeta filtros de fecha y estado de pedido
+- ⚠️ **Seguridad**: Solo procesa pedidos en estado "Procesando" o "Completado"
+
+**Funciones agregadas**:
+- `ajax_fix_package_duplicates()`: Handler AJAX principal
+- `find_replacement_product()`: Encuentra producto de reemplazo sin duplicar SKU
+
+**Ejemplo de uso**:
+```
+Paquete original:
+  - Sticker SR 10867 (SKU: sticker-sr-10867)
+  - Sticker SR 10867 (SKU: sticker-sr-10867) ❌ DUPLICADO
+  - Sticker SR 10679 (SKU: sticker-sr-10679)
+
+Después de regenerar:
+  - Sticker SR 10867 (SKU: sticker-sr-10867)
+  - Sticker SR 11234 (SKU: sticker-sr-11234) ✅ NUEVO
+  - Sticker SR 10679 (SKU: sticker-sr-10679)
+```
+
+---
+
+## [1.9.23] - 2026-02-03
+
+### 🐛 Bugfix Crítico
+
+**Fix Duplicados en Reducción/Restauración de Stock**:
+- 🔧 Corregida lógica de `sco_package_reduce_components_stock()` para prevenir reducciones duplicadas de stock
+- 🔧 Corregida lógica de `sco_package_restore_components_stock()` para prevenir restauraciones duplicadas
+- ✅ **Problema identificado**: Si un paquete contenía el mismo producto/SKU múltiples veces, el stock se reducía/restauraba por cada aparición individual
+- ✅ **Solución implementada**: 
+  - Los componentes se agrupan por SKU antes de operaciones de stock
+  - Se suma la cantidad total de cada SKU único
+  - Se reduce/restaura stock SOLO UNA VEZ por SKU con la cantidad total acumulada
+- 📝 **Mejora en notas**: Las notas del pedido ahora incluyen el SKU en el formato `Producto (SKU: xxx, ID: nnn) xCantidad`
+- 🎯 **Impacto**: Previene descuentos de stock incorrectos en paquetes con productos duplicados
+
+**Ejemplo del fix**:
+```
+Antes: 
+  Paquete con sticker-sr-10867 aparece 2 veces
+  → reduce stock 2 veces = -2 unidades ❌
+
+Ahora: 
+  Paquete con sticker-sr-10867 aparece 2 veces
+  → agrupa por SKU, suma cantidades (1+1=2)
+  → reduce stock 1 vez con cantidad 2 = -2 unidades ✅
+  (pero registra correctamente como UNA operación)
+```
+
+---
+
+## [1.9.22] - 2026-02-03
+
+### 🆕 Nuevas Características
+
+**Exportar Ventas - Panel Extra WooCommerce**:
+- 🆕 Nueva pestaña "Exportar Ventas" en "Extra WooCommerce" → "Stock y Ordenamiento"
+- 📊 Exportación completa de ventas de paquetes SCO en formato CSV
+- 🔍 **Desglose de Componentes**: Cada componente del paquete aparece como fila separada en la exportación
+  - Ejemplo: Un paquete con 10 componentes = 10 filas en el CSV
+  - Información por componente: ID producto, SKU, cantidad, precio, origen (dentro del paquete)
+  - Útil para auditoría detallada de qué productos se vendieron dentro de cada paquete
+- ⚠️ **Detección de Duplicados**: Marca con ⚠️ SÍ si un producto aparece múltiples veces en el mismo pedido
+  - Control de calidad: identifica paquetes con productos repetidos
+  - Ayuda a detectar errores en la composición o regeneración de paquetes
+- 🔎 **Filtrado Avanzado**:
+  - Rango de fechas customizable (default: últimos 30 días)
+  - Filtro por estado de pedido: Pendiente, Procesando, Completado, Cancelado, Reembolsado
+  - Exporta solo los pedidos que cumplen los criterios seleccionados
+- 📋 **Columnas CSV**: Pedido, Fecha, Cliente, Email, Producto, ID, SKU, Cantidad, Precio, Origen, Duplicado
+  - Formato diseñado para análisis en Excel o Google Sheets
+- 🌐 **Formato Excel Compatible**: Incluye BOM UTF-8 para garantizar caracteres especiales (ñ, acentos) correctamente en Microsoft Excel
+
+### 🔧 Detalles Técnicos
+
+- 🆕 Función `render_export_sales_tab()` en `class-sorteo-wc-extra.php`
+  - UI intuitiva con date pickers (jQuery UI Datepicker)
+  - Checkboxes para selección de estado de pedidos
+  - Botón para iniciar descarga AJAX
+- 🆕 Función `ajax_export_sales()` en `class-sorteo-wc-extra.php`
+  - Query de pedidos con filtros de fecha y estado
+  - Iteración de componentes de paquetes para desglose
+  - Detección de duplicados por producto dentro de cada orden
+  - Generación de CSV con BOM UTF-8 y fputcsv
+  - Headers: `Content-Type: text/csv; charset=utf-8-sig`, `Content-Disposition: attachment`
+- 🔒 Seguridad: Verifica permisos `manage_woocommerce` en AJAX handler
+
+### 📊 Casos de Uso
+
+1. **Auditoría de Componentes**: Ver exactamente qué productos se vendieron dentro de cada paquete
+2. **Detección de Duplicados**: Identificar paquetes con componentes repetidos para QA/testing
+3. **Análisis de Ventas**: Reportes en Excel con desglose completo por componente
+4. **Seguimiento de Inventario**: Exportar ventas para comparar con actualización de stock real
+
+---
+
+## [1.9.21] - 2026-02-02
+
+### 🐛 Bugfixes
+
+**Reservas entre carritos y duplicados en paquetes**:
+- 🔧 Ajustada la validación de reservas para considerar productos reservados por otros usuarios incluso si no gestionan stock
+- ✅ Previene que dos pedidos distintos incluyan el mismo producto cuando ya está reservado por otro carrito
+- ✅ Mejora la consistencia en packs de 10 durante compras concurrentes
 
 ---
 

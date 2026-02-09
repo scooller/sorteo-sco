@@ -1,68 +1,10 @@
-# 🎲 Plugin Sorteo v1.9.20
+# 🎲 Plugin Sorteo v1.9.28
 
 Plugin completo para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas avanzadas, gestión de stock con HPOS y marcos visuales en WooCommerce.
 
-## 📝 Registro de Cambios
+## � Registro de Cambios
 
-Ver archivo [CHANGELOG.md](CHANGELOG.md) para historial completo de versiones y cambios detallados.
-
-### v1.9.20 (2026-01-04)
-
-**Correcciones Críticas:**
-- ✅ **Productos duplicados en paquetes**: Ahora el sistema previene que se agreguen múltiples paquetes con productos repetidos al carrito
-  - Validación mejorada entre paquetes diferentes
-  - **NUEVO**: Regeneración automática de composición cuando se detectan duplicados en modo sorpresa
-    - Si hay conflicto, el sistema automáticamente genera una nueva composición excluyendo productos duplicados
-    - Aviso informativo al usuario: "Se detectaron productos duplicados. Se sustituyeron automáticamente por [nuevos productos]"
-    - En modo manual (productos fijos), muestra error porque no se puede cambiar la composición
-  - **NUEVO**: Autoregeneración en el carrito entre paquetes ya añadidos (solo modo sorpresa)
-    - Si dos paquetes existentes comparten productos, se regeneran excluyendo los componentes ya presentes
-    - Las reservas de stock se resincronizan automáticamente después de la regeneración
-  - Aviso visual en la página del carrito solo para duplicados NO resueltos
-- ✅ **Correos duplicados**: Solucionado el envío de múltiples emails por paquete
-  - Ahora se envía UN SOLO email por pedido con todos los paquetes
-  - El email incluye todas las descargas de todos los paquetes en una sola comunicación
-  - Marca correcta de envío a nivel de pedido (no por item)
-- ✅ **Notas de pedido duplicadas**: Consolidadas las notas de stock
-  - Una sola nota por pedido con todos los paquetes procesados
-  - Formato organizado por paquete con bullets jerárquicos
-  - Aplica tanto para descuento como para restauración de stock
-
-**Mejoras:**
-- 🔧 Refactorización de `send_package_component_downloads_email()` para procesar múltiples paquetes
-- 🔧 Validación mejorada en `sco_package_validate_duplicate_in_cart()` para detectar productos compartidos
-- 🔧 Nueva función `sco_package_generate_composition_excluding_products()` para regeneración automática
-- 🔧 Nueva función `sco_pkg_display_cart_duplicate_warning()` que muestra aviso solo para duplicados no resueltos
-- 📧 Subject del email ahora muestra número de pedido en lugar de nombre de paquete cuando hay múltiples
-- 📝 Notas de pedido ahora son mucho más limpias y organizadas
-- 🎨 Aviso en carrito con diseño profesional usando Bootstrap (si está disponible) o estilos inline
-
-**Validación en 3 Niveles (Inteligente):**
-1. **Add-to-cart**: Detecta duplicados y marca para regeneración automática (en modo sorpresa)
-2. **Carrito**: Regenera automáticamente si es posible, muestra aviso informativo de sustitución
-3. **Checkout**: Bloquea el pago si hay duplicados no resueltos
-
-**Impacto:**
-- ✅ Mejor experiencia de usuario al alertar sobre duplicados antes del checkout
-- ✅ Reducción de spam: un solo email en lugar de uno por paquete
-- ✅ Claridad en mensajes de error del carrito
-- ✅ Notas de pedido más legibles y profesionales
-- ✅ Prevención de errores de pago por productos duplicados
-
----
-
-### v1.9.19 (2026-01-04)
-
-**Mejoras:**
-- ✅ Corrección de zona horaria GMT en reservas de stock (monitor ahora muestra tiempo correcto)
-- ✅ Reducción de logs: todos los logs de debug ahora controlados por flag `sorteo_sco_debug_logs`
-- ✅ Throttling de sincronización de reservas (evita ejecuciones duplicadas en la misma request)
-- ✅ Optimización de rendimiento en hooks de WooCommerce
-
-**Issues Conocidos:**
-- ⚠️ En algunas configuraciones, el gateway Flow puede mostrar error genérico durante checkout aunque el stock esté disponible
-- 🔧 Workaround: Los errores falsos se suprimen automáticamente, pero puede aparecer mensaje temporal
-- 📅 Solución completa planeada para v1.9.20
+Para ver el historial completo de versiones y cambios detallados, consulta [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
