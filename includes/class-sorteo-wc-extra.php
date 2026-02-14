@@ -43,6 +43,11 @@ class Sorteo_WC_Extra
     public function register_settings()
     {
         register_setting('sorteo_wc_extra_group', 'sorteo_wc_price_update_log');
+        register_setting('sorteo_wc_extra_group', 'sorteo_wc_qty_pricing_enabled');
+        register_setting('sorteo_wc_extra_group', 'sorteo_wc_qty_pricing_priority');
+        register_setting('sorteo_wc_extra_group', 'sorteo_wc_qty_pricing_rules', [
+            'sanitize_callback' => [$this, 'sanitize_qty_pricing_rules'],
+        ]);
         register_setting('sorteo_wc_stock_group', 'sorteo_wc_enable_stock_management');
         register_setting('sorteo_wc_stock_group', 'sorteo_wc_stock_product_types');
         register_setting('sorteo_wc_stock_group', 'sorteo_wc_enable_stock_reservation');
@@ -71,6 +76,10 @@ class Sorteo_WC_Extra
                     class="nav-tab <?php echo $active_tab === 'export_sales' ? 'nav-tab-active' : ''; ?>">
                     <?php esc_html_e('Exportar Ventas', 'sorteo-sco'); ?>
                 </a>
+                <a href="?page=sorteo-wc-extra&tab=qty_pricing"
+                    class="nav-tab <?php echo $active_tab === 'qty_pricing' ? 'nav-tab-active' : ''; ?>">
+                    <?php esc_html_e('Precios Cantidad', 'sorteo-sco'); ?>
+                </a>
                 <a href="?page=sorteo-wc-extra&tab=package_metrics"
                     class="nav-tab <?php echo $active_tab === 'package_metrics' ? 'nav-tab-active' : ''; ?>">
                     <?php esc_html_e('Métricas Paquetes', 'sorteo-sco'); ?>
@@ -91,6 +100,8 @@ class Sorteo_WC_Extra
                     $this->render_price_updater_tab();
                 } elseif ($active_tab === 'export_sales') {
                     $this->render_export_sales_tab();
+                } elseif ($active_tab === 'qty_pricing') {
+                    $this->render_qty_pricing_tab();
                 } elseif ($active_tab === 'package_metrics') {
                     $this->render_package_metrics_tab();
                 } elseif ($active_tab === 'stock_config') {
@@ -625,6 +636,330 @@ class Sorteo_WC_Extra
                             $result.html('<div class="notice notice-error"><p><?php esc_html_e('Error al procesar la solicitud.', 'sorteo-sco'); ?></p></div>');
                         }
                     });
+                });
+            });
+        </script>
+    <?php
+    }
+
+    public function sanitize_qty_pricing_rules($rules)
+    {
+        if (!is_array($rules)) {
+            return [];
+        }
+
+        $clean_rules = [];
+
+        foreach ($rules as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+
+            $category_id = isset($rule['category_id']) ? absint($rule['category_id']) : 0;
+            if ($category_id <= 0) {
+                continue;
+            }
+
+            $tiers = isset($rule['tiers']) && is_array($rule['tiers']) ? $rule['tiers'] : [];
+            $clean_tiers = [];
+
+            foreach ($tiers as $tier) {
+                if (!is_array($tier)) {
+                    continue;
+                }
+
+                $min = isset($tier['min']) ? absint($tier['min']) : 0;
+                $max = isset($tier['max']) ? absint($tier['max']) : 0;
+                $price = isset($tier['price']) ? (float) $tier['price'] : 0.0;
+
+                if ($min <= 0 || $price <= 0) {
+                    continue;
+                }
+
+                if ($max > 0 && $max < $min) {
+                    continue;
+                }
+
+                $clean_tiers[] = [
+                    'min' => $min,
+                    'max' => $max,
+                    'price' => $price,
+                ];
+            }
+
+            if (empty($clean_tiers)) {
+                continue;
+            }
+
+            usort($clean_tiers, function ($a, $b) {
+                return $a['min'] <=> $b['min'];
+            });
+
+            $clean_rules[] = [
+                'category_id' => $category_id,
+                'tiers' => $clean_tiers,
+            ];
+        }
+
+        return $clean_rules;
+    }
+
+    private function render_qty_pricing_tab()
+    {
+        if (isset($_POST['sorteo_qty_pricing_nonce']) && wp_verify_nonce($_POST['sorteo_qty_pricing_nonce'], 'sorteo_qty_pricing')) {
+            $enabled = isset($_POST['sorteo_wc_qty_pricing_enabled']) ? 'yes' : 'no';
+            $priority = isset($_POST['sorteo_wc_qty_pricing_priority']) ? sanitize_text_field($_POST['sorteo_wc_qty_pricing_priority']) : 'lowest';
+            $rules = isset($_POST['sorteo_qty_rules']) ? (array) $_POST['sorteo_qty_rules'] : [];
+
+            $priority = in_array($priority, ['lowest', 'first', 'highest'], true) ? $priority : 'lowest';
+            $rules = $this->sanitize_qty_pricing_rules($rules);
+
+            update_option('sorteo_wc_qty_pricing_enabled', $enabled);
+            update_option('sorteo_wc_qty_pricing_priority', $priority);
+            update_option('sorteo_wc_qty_pricing_rules', $rules);
+
+            echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Configuración guardada correctamente.', 'sorteo-sco') . '</p></div>';
+        }
+
+        $enabled = get_option('sorteo_wc_qty_pricing_enabled', 'no');
+        $priority = get_option('sorteo_wc_qty_pricing_priority', 'lowest');
+        $rules = get_option('sorteo_wc_qty_pricing_rules', []);
+        if (!is_array($rules)) {
+            $rules = [];
+        }
+
+        $categories = get_terms([
+            'taxonomy' => 'product_cat',
+            'hide_empty' => false,
+            'orderby' => 'name',
+            'order' => 'ASC'
+        ]);
+
+        $priority_options = [
+            'lowest' => __('Precio más bajo', 'sorteo-sco'),
+            'first' => __('Orden de reglas', 'sorteo-sco'),
+            'highest' => __('Precio más alto', 'sorteo-sco'),
+        ];
+    ?>
+        <h2><?php esc_html_e('Precios por Cantidad en Carrito', 'sorteo-sco'); ?></h2>
+        <p><?php esc_html_e('Define precios progresivos por categoría según la cantidad total de productos en el carrito.', 'sorteo-sco'); ?></p>
+
+        <form method="post" id="sorteo-qty-pricing-form" style="max-width:1000px;">
+            <?php wp_nonce_field('sorteo_qty_pricing', 'sorteo_qty_pricing_nonce'); ?>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row">
+                        <label for="sorteo_wc_qty_pricing_enabled"><?php esc_html_e('Habilitar precios por cantidad', 'sorteo-sco'); ?></label>
+                    </th>
+                    <td>
+                        <label>
+                            <input type="checkbox" id="sorteo_wc_qty_pricing_enabled" name="sorteo_wc_qty_pricing_enabled" value="yes" <?php checked($enabled, 'yes'); ?> />
+                            <?php esc_html_e('Aplicar precios progresivos en carrito y checkout', 'sorteo-sco'); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="sorteo_wc_qty_pricing_priority"><?php esc_html_e('Prioridad por categoría', 'sorteo-sco'); ?></label>
+                    </th>
+                    <td>
+                        <select id="sorteo_wc_qty_pricing_priority" name="sorteo_wc_qty_pricing_priority" class="regular-text">
+                            <?php foreach ($priority_options as $value => $label): ?>
+                                <option value="<?php echo esc_attr($value); ?>" <?php selected($priority, $value); ?>>
+                                    <?php echo esc_html($label); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <p class="description"><?php esc_html_e('Si un producto pertenece a múltiples categorías con reglas, se aplicará esta prioridad.', 'sorteo-sco'); ?></p>
+                    </td>
+                </tr>
+            </table>
+
+            <h3 style="margin-top:30px;"><?php esc_html_e('Reglas por Categoría', 'sorteo-sco'); ?></h3>
+            <p class="description"><?php esc_html_e('Cada regla define una categoría y sus tramos de precio por cantidad. El máximo puede quedar vacío para indicar "sin límite".', 'sorteo-sco'); ?></p>
+
+            <div id="sorteo-qty-pricing-rules">
+                <?php
+                if (empty($rules)) {
+                    $rules = [
+                        [
+                            'category_id' => 0,
+                            'tiers' => [
+                                ['min' => 1, 'max' => 3, 'price' => 5000],
+                            ],
+                        ],
+                    ];
+                }
+
+                foreach ($rules as $rule_index => $rule) :
+                    $category_id = isset($rule['category_id']) ? (int) $rule['category_id'] : 0;
+                    $tiers = isset($rule['tiers']) && is_array($rule['tiers']) ? $rule['tiers'] : [];
+                    if (empty($tiers)) {
+                        $tiers = [['min' => 1, 'max' => 0, 'price' => 0]];
+                    }
+                ?>
+                    <div class="sorteo-qty-rule" data-rule-index="<?php echo esc_attr($rule_index); ?>" style="border:1px solid #ddd;padding:15px;margin-bottom:20px;background:#fafafa;">
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                            <label for="sorteo_qty_rules_<?php echo esc_attr($rule_index); ?>_category" style="font-weight:600;">
+                                <?php esc_html_e('Categoría', 'sorteo-sco'); ?>
+                            </label>
+                            <select id="sorteo_qty_rules_<?php echo esc_attr($rule_index); ?>_category" name="sorteo_qty_rules[<?php echo esc_attr($rule_index); ?>][category_id]" style="min-width:260px;">
+                                <option value="0"><?php esc_html_e('Seleccionar categoría', 'sorteo-sco'); ?></option>
+                                <?php foreach ($categories as $cat): ?>
+                                    <option value="<?php echo esc_attr($cat->term_id); ?>" <?php selected($category_id, $cat->term_id); ?>>
+                                        <?php echo esc_html($cat->name); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <button type="button" class="button button-link-delete btn-remove-qty-rule">
+                                <?php esc_html_e('Eliminar regla', 'sorteo-sco'); ?>
+                            </button>
+                        </div>
+
+                        <table class="wp-list-table widefat striped" style="margin-top:15px;">
+                            <thead>
+                                <tr>
+                                    <th><?php esc_html_e('Cantidad mínima', 'sorteo-sco'); ?></th>
+                                    <th><?php esc_html_e('Cantidad máxima', 'sorteo-sco'); ?></th>
+                                    <th><?php esc_html_e('Precio unitario', 'sorteo-sco'); ?></th>
+                                    <th><?php esc_html_e('Acciones', 'sorteo-sco'); ?></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($tiers as $tier_index => $tier): ?>
+                                    <tr class="qty-tier-row">
+                                        <td>
+                                            <input type="number" min="1" step="1" name="sorteo_qty_rules[<?php echo esc_attr($rule_index); ?>][tiers][<?php echo esc_attr($tier_index); ?>][min]" value="<?php echo esc_attr((int) ($tier['min'] ?? 1)); ?>" style="width:120px;" />
+                                        </td>
+                                        <td>
+                                            <input type="number" min="0" step="1" name="sorteo_qty_rules[<?php echo esc_attr($rule_index); ?>][tiers][<?php echo esc_attr($tier_index); ?>][max]" value="<?php echo esc_attr((int) ($tier['max'] ?? 0)); ?>" style="width:120px;" placeholder="∞" />
+                                        </td>
+                                        <td>
+                                            <input type="number" min="0" step="0.01" name="sorteo_qty_rules[<?php echo esc_attr($rule_index); ?>][tiers][<?php echo esc_attr($tier_index); ?>][price]" value="<?php echo esc_attr((float) ($tier['price'] ?? 0)); ?>" style="width:140px;" />
+                                        </td>
+                                        <td>
+                                            <button type="button" class="button btn-remove-qty-tier"><?php esc_html_e('Eliminar', 'sorteo-sco'); ?></button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        <button type="button" class="button btn-add-qty-tier" style="margin-top:10px;">
+                            <?php esc_html_e('Agregar tramo', 'sorteo-sco'); ?>
+                        </button>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+
+            <p>
+                <button type="button" class="button" id="btn-add-qty-rule"><?php esc_html_e('Agregar regla', 'sorteo-sco'); ?></button>
+            </p>
+
+            <p class="submit">
+                <input type="submit" class="button button-primary" value="<?php esc_attr_e('Guardar Configuración', 'sorteo-sco'); ?>" />
+            </p>
+        </form>
+
+        <script type="text/template" id="sorteo-qty-rule-template">
+            <div class="sorteo-qty-rule" data-rule-index="__INDEX__" style="border:1px solid #ddd;padding:15px;margin-bottom:20px;background:#fafafa;">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <label for="sorteo_qty_rules___INDEX___category" style="font-weight:600;">
+                        <?php esc_html_e('Categoría', 'sorteo-sco'); ?>
+                    </label>
+                    <select id="sorteo_qty_rules___INDEX___category" name="sorteo_qty_rules[__INDEX__][category_id]" style="min-width:260px;">
+                        <option value="0"><?php esc_html_e('Seleccionar categoría', 'sorteo-sco'); ?></option>
+                        <?php foreach ($categories as $cat): ?>
+                            <option value="<?php echo esc_attr($cat->term_id); ?>"><?php echo esc_html($cat->name); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <button type="button" class="button button-link-delete btn-remove-qty-rule">
+                        <?php esc_html_e('Eliminar regla', 'sorteo-sco'); ?>
+                    </button>
+                </div>
+
+                <table class="wp-list-table widefat striped" style="margin-top:15px;">
+                    <thead>
+                        <tr>
+                            <th><?php esc_html_e('Cantidad mínima', 'sorteo-sco'); ?></th>
+                            <th><?php esc_html_e('Cantidad máxima', 'sorteo-sco'); ?></th>
+                            <th><?php esc_html_e('Precio unitario', 'sorteo-sco'); ?></th>
+                            <th><?php esc_html_e('Acciones', 'sorteo-sco'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="qty-tier-row">
+                            <td>
+                                <input type="number" min="1" step="1" name="sorteo_qty_rules[__INDEX__][tiers][0][min]" value="1" style="width:120px;" />
+                            </td>
+                            <td>
+                                <input type="number" min="0" step="1" name="sorteo_qty_rules[__INDEX__][tiers][0][max]" value="0" style="width:120px;" placeholder="∞" />
+                            </td>
+                            <td>
+                                <input type="number" min="0" step="0.01" name="sorteo_qty_rules[__INDEX__][tiers][0][price]" value="0" style="width:140px;" />
+                            </td>
+                            <td>
+                                <button type="button" class="button btn-remove-qty-tier"><?php esc_html_e('Eliminar', 'sorteo-sco'); ?></button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                <button type="button" class="button btn-add-qty-tier" style="margin-top:10px;">
+                    <?php esc_html_e('Agregar tramo', 'sorteo-sco'); ?>
+                </button>
+            </div>
+        </script>
+
+        <script type="text/template" id="sorteo-qty-tier-template">
+            <tr class="qty-tier-row">
+                <td>
+                    <input type="number" min="1" step="1" name="sorteo_qty_rules[__RULE__][tiers][__TIER__][min]" value="1" style="width:120px;" />
+                </td>
+                <td>
+                    <input type="number" min="0" step="1" name="sorteo_qty_rules[__RULE__][tiers][__TIER__][max]" value="0" style="width:120px;" placeholder="∞" />
+                </td>
+                <td>
+                    <input type="number" min="0" step="0.01" name="sorteo_qty_rules[__RULE__][tiers][__TIER__][price]" value="0" style="width:140px;" />
+                </td>
+                <td>
+                    <button type="button" class="button btn-remove-qty-tier"><?php esc_html_e('Eliminar', 'sorteo-sco'); ?></button>
+                </td>
+            </tr>
+        </script>
+
+        <script>
+            jQuery(function($) {
+                var ruleIndex = $('#sorteo-qty-pricing-rules .sorteo-qty-rule').length;
+
+                $('#btn-add-qty-rule').on('click', function(e) {
+                    e.preventDefault();
+                    var template = $('#sorteo-qty-rule-template').html().replace(/__INDEX__/g, ruleIndex);
+                    $('#sorteo-qty-pricing-rules').append(template);
+                    ruleIndex++;
+                });
+
+                $(document).on('click', '.btn-add-qty-tier', function(e) {
+                    e.preventDefault();
+                    var $rule = $(this).closest('.sorteo-qty-rule');
+                    var ruleId = $rule.data('rule-index');
+                    var tierIndex = $rule.find('.qty-tier-row').length;
+                    var template = $('#sorteo-qty-tier-template').html()
+                        .replace(/__RULE__/g, ruleId)
+                        .replace(/__TIER__/g, tierIndex);
+                    $rule.find('tbody').append(template);
+                });
+
+                $(document).on('click', '.btn-remove-qty-tier', function(e) {
+                    e.preventDefault();
+                    var $rows = $(this).closest('tbody').find('.qty-tier-row');
+                    if ($rows.length > 1) {
+                        $(this).closest('tr').remove();
+                    }
+                });
+
+                $(document).on('click', '.btn-remove-qty-rule', function(e) {
+                    e.preventDefault();
+                    $(this).closest('.sorteo-qty-rule').remove();
                 });
             });
         </script>

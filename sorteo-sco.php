@@ -2,7 +2,7 @@
 /*
 Plugin Name: Sorteo
 Description: Plugin para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas y marcos visuales en WooCommerce.
-Version: 1.9.28
+Version: 1.9.31
 Author: scooller
 Author URI: https://scooller.bio
 Plugin URI: https://scooller.bio
@@ -22,7 +22,7 @@ add_action('before_woocommerce_init', function () {
 });
 
 // Definir constantes del plugin
-define('SORTEO_SCO_VERSION', '1.9.28');
+define('SORTEO_SCO_VERSION', '1.9.31');
 define('SORTEO_SCO_PLUGIN_FILE', __FILE__);
 define('SORTEO_SCO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SORTEO_SCO_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -119,6 +119,191 @@ function sorteo_sco_should_manage_stock($product)
 	}
 
 	return true;
+}
+
+add_action('woocommerce_before_calculate_totals', 'sorteo_sco_apply_qty_pricing', 20, 1);
+function sorteo_sco_apply_qty_pricing($cart)
+{
+	if (is_admin() && !defined('DOING_AJAX')) {
+		return;
+	}
+
+	if (!$cart || $cart->is_empty()) {
+		return;
+	}
+
+	$enabled = get_option('sorteo_wc_qty_pricing_enabled', 'no');
+	if ($enabled !== 'yes') {
+		return;
+	}
+
+	$rules = get_option('sorteo_wc_qty_pricing_rules', []);
+	if (!is_array($rules) || empty($rules)) {
+		return;
+	}
+
+	static $processing = false;
+	if ($processing) {
+		return;
+	}
+	$processing = true;
+
+	$priority = get_option('sorteo_wc_qty_pricing_priority', 'lowest');
+	$priority = in_array($priority, ['lowest', 'first', 'highest'], true) ? $priority : 'lowest';
+
+	$rule_map = [];
+	foreach ($rules as $rule) {
+		if (!is_array($rule)) {
+			continue;
+		}
+		$category_id = isset($rule['category_id']) ? absint($rule['category_id']) : 0;
+		$tiers = isset($rule['tiers']) && is_array($rule['tiers']) ? $rule['tiers'] : [];
+		if ($category_id <= 0 || empty($tiers)) {
+			continue;
+		}
+		$rule_map[$category_id] = [
+			'category_id' => $category_id,
+			'tiers' => $tiers,
+		];
+	}
+
+	if (empty($rule_map)) {
+		$processing = false;
+		return;
+	}
+
+	$cat_qty = [];
+	foreach ($cart->get_cart() as $cart_item) {
+		$product = isset($cart_item['data']) ? $cart_item['data'] : null;
+		if (!$product) {
+			continue;
+		}
+
+		if ($product->get_type() === 'sco_package') {
+			continue;
+		}
+
+		$qty = isset($cart_item['quantity']) ? max(1, (int) $cart_item['quantity']) : 1;
+		$category_ids = sorteo_sco_get_product_category_ids($product);
+
+		foreach ($category_ids as $category_id) {
+			if (!isset($rule_map[$category_id])) {
+				continue;
+			}
+			$cat_qty[$category_id] = isset($cat_qty[$category_id]) ? $cat_qty[$category_id] + $qty : $qty;
+		}
+	}
+
+	$cat_prices = [];
+	foreach ($rule_map as $category_id => $rule) {
+		$qty = isset($cat_qty[$category_id]) ? (int) $cat_qty[$category_id] : 0;
+		if ($qty <= 0) {
+			continue;
+		}
+		$price = sorteo_sco_pick_qty_price($qty, $rule['tiers']);
+		if ($price !== null) {
+			$cat_prices[$category_id] = $price;
+		}
+	}
+
+	foreach ($cart->get_cart() as $cart_item_key => $cart_item) {
+		$product = isset($cart_item['data']) ? $cart_item['data'] : null;
+		if (!$product) {
+			continue;
+		}
+
+		if ($product->get_type() === 'sco_package') {
+			continue;
+		}
+
+		if (!isset($cart->cart_contents[$cart_item_key]['sorteo_qty_base_price'])) {
+			$cart->cart_contents[$cart_item_key]['sorteo_qty_base_price'] = (float) $product->get_price();
+		}
+		$base_price = (float) $cart->cart_contents[$cart_item_key]['sorteo_qty_base_price'];
+
+		$category_ids = sorteo_sco_get_product_category_ids($product);
+		$matched_prices = [];
+
+		foreach ($category_ids as $category_id) {
+			if (isset($cat_prices[$category_id])) {
+				$matched_prices[$category_id] = (float) $cat_prices[$category_id];
+			}
+		}
+
+		$apply_price = null;
+		if (!empty($matched_prices)) {
+			if ($priority === 'lowest') {
+				$apply_price = min($matched_prices);
+			} elseif ($priority === 'highest') {
+				$apply_price = max($matched_prices);
+			} else {
+				foreach ($rules as $rule) {
+					$category_id = isset($rule['category_id']) ? absint($rule['category_id']) : 0;
+					if ($category_id > 0 && isset($matched_prices[$category_id])) {
+						$apply_price = $matched_prices[$category_id];
+						break;
+					}
+				}
+			}
+		}
+
+		if ($apply_price !== null) {
+			$product->set_price($apply_price);
+		} else {
+			$product->set_price($base_price);
+		}
+	}
+
+	$processing = false;
+}
+
+function sorteo_sco_get_product_category_ids($product)
+{
+	if (!$product) {
+		return [];
+	}
+
+	$product_id = $product->get_id();
+	if ($product->is_type('variation')) {
+		$product_id = $product->get_parent_id();
+	}
+
+	$terms = wp_get_post_terms($product_id, 'product_cat', ['fields' => 'ids']);
+	if (is_wp_error($terms) || empty($terms)) {
+		return [];
+	}
+
+	return array_map('intval', $terms);
+}
+
+function sorteo_sco_pick_qty_price($qty, $tiers)
+{
+	if ($qty <= 0 || empty($tiers) || !is_array($tiers)) {
+		return null;
+	}
+
+	$selected = null;
+	foreach ($tiers as $tier) {
+		if (!is_array($tier)) {
+			continue;
+		}
+		$min = isset($tier['min']) ? (int) $tier['min'] : 0;
+		$max = isset($tier['max']) ? (int) $tier['max'] : 0;
+		$price = isset($tier['price']) ? (float) $tier['price'] : 0.0;
+
+		if ($min <= 0 || $price <= 0) {
+			continue;
+		}
+		if ($qty < $min) {
+			continue;
+		}
+		if ($max > 0 && $qty > $max) {
+			continue;
+		}
+		$selected = $price;
+	}
+
+	return $selected;
 }
 
 /**
@@ -348,6 +533,7 @@ require_once __DIR__ . '/includes/class-sorteo-export.php';
 require_once __DIR__ . '/includes/class-sorteo-metrics.php';
 require_once __DIR__ . '/includes/class-sorteo-product-frame.php';
 require_once __DIR__ . '/includes/class-sorteo-package-simple.php';
+require_once __DIR__ . '/includes/class-sorteo-package-new.php';
 require_once __DIR__ . '/includes/class-sorteo-markdown.php';
 require_once __DIR__ . '/includes/class-sorteo-wc-extra.php';
 

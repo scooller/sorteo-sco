@@ -1,7 +1,63 @@
 # 📋 Changelog - Plugin Sorteo SCO
 
 **Autor**: scooller
-**Última actualización**: 2026-02-05
+**Última actualización**: 2026-02-12
+
+---
+
+## [1.9.31] - 2026-02-12
+
+### 🐛 Corrección
+
+**Paquete SCO (Nuevo) - Display de categoría**:
+- ✅ Fix: Ahora muestra el nombre de la categoría en el selector de cantidad.
+- ✅ Ejemplo: "Cantidad de stickers:" en vez de "Cantidad de productos:".
+- ✅ Las opciones también muestran la categoría: "4 stickers", "10 stickers", etc.
+
+### 🧹 Optimización
+
+**Código limpio**:
+- ✅ Eliminados logs de debug (19 líneas de error_log).
+- ✅ Simplificada función `sco_package_new_save_product_meta` (de 76 a 35 líneas).
+- ✅ Reutilizada función helper `sco_pkg_new_get_category_label()` en el frontend.
+
+---
+
+## [1.9.30] - 2026-02-12
+
+### 🆕 Nueva Funcionalidad
+
+**Nuevo tipo de producto: Paquete SCO (Nuevo)**:
+- ✅ Tipo de producto `paquete_sco_new` para agregar X productos aleatorios de una categoría.
+- ✅ Selector de cantidades en frontend (4, 8, 10, 20, 25, configurables por admin).
+- ✅ Garantiza usuarios no duplicados: cada producto del paquete es único.
+- ✅ Stock gestionado directamente por WooCommerce (no requiere transientes de reserva).
+- ✅ Configuración simple: categoría fuente + cantidad de opciones disponibles.
+- ✅ Campos personalizados en admin para cada paquete.
+
+### 🐛 Corrección
+
+**Paquete SCO (Nuevo) - Agregado al carrito**:
+- ✅ Ahora agrega los productos individuales al carrito (no el paquete).
+- ✅ Filtra productos sin stock o no comprables para evitar errores al agregar.
+- ✅ Excluye el propio paquete si pertenece a la categoría configurada.
+
+**Diferencias con `sco_package`**:
+- Más simple: siempre selecciona al azar de UNA categoría (no modos manual/random separados).
+- Sin composición manual: el usuario elige cantidad, el sistema genera los productos.
+- Stock nativo: WooCommerce gestiona directamente, sin transientes ni reservas.
+- Ideal para: sorteos simples, promociones, paquetes de cantidad variable.
+
+---
+
+## [1.9.29] - 2026-02-12
+
+### 🆕 Nueva Funcionalidad
+
+**Precios por cantidad (cart/checkout)**:
+- ✅ Nuevo tab "Precios Cantidad" en Extra WooCommerce.
+- ✅ Reglas por categoria con tramos de precio segun cantidad.
+- ✅ Prioridad configurable si un producto esta en multiples categorias.
 
 ---
 

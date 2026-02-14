@@ -120,6 +120,72 @@ msgstr "Total de pedidos elegíveis"
 msgid "Ganancia total acumulada"
 msgstr "Lucro total acumulado"
 
+msgid "Precios Cantidad"
+msgstr "Precos por Quantidade"
+
+msgid "Precios por Cantidad en Carrito"
+msgstr "Precos por Quantidade no Carrinho"
+
+msgid "Define precios progresivos por categoría según la cantidad total de productos en el carrito."
+msgstr "Defina precos progressivos por categoria conforme a quantidade total de produtos no carrinho."
+
+msgid "Habilitar precios por cantidad"
+msgstr "Habilitar precos por quantidade"
+
+msgid "Aplicar precios progresivos en carrito y checkout"
+msgstr "Aplicar precos progressivos no carrinho e checkout"
+
+msgid "Prioridad por categoría"
+msgstr "Prioridade por categoria"
+
+msgid "Precio más bajo"
+msgstr "Preco mais baixo"
+
+msgid "Orden de reglas"
+msgstr "Ordem das regras"
+
+msgid "Precio más alto"
+msgstr "Preco mais alto"
+
+msgid "Si un producto pertenece a múltiples categorías con reglas, se aplicará esta prioridad."
+msgstr "Se um produto pertence a multiplas categorias com regras, sera aplicada esta prioridade."
+
+msgid "Reglas por Categoría"
+msgstr "Regras por Categoria"
+
+msgid "Cada regla define una categoría y sus tramos de precio por cantidad. El máximo puede quedar vacío para indicar \"sin límite\"."
+msgstr "Cada regra define uma categoria e suas faixas de preco por quantidade. O maximo pode ficar vazio para indicar \"sem limite\"."
+
+msgid "Categoría"
+msgstr "Categoria"
+
+msgid "Seleccionar categoría"
+msgstr "Selecionar categoria"
+
+msgid "Eliminar regla"
+msgstr "Excluir regra"
+
+msgid "Cantidad mínima"
+msgstr "Quantidade minima"
+
+msgid "Cantidad máxima"
+msgstr "Quantidade maxima"
+
+msgid "Precio unitario"
+msgstr "Preco unitario"
+
+msgid "Acciones"
+msgstr "Acoes"
+
+msgid "Eliminar"
+msgstr "Excluir"
+
+msgid "Agregar tramo"
+msgstr "Adicionar faixa"
+
+msgid "Agregar regla"
+msgstr "Adicionar regra"
+
 msgid "Ganancia del período actual"
 msgstr "Lucro do período atual"
 
@@ -203,3 +269,55 @@ msgstr "Não há pedidos elegíveis"
 
 msgid "Seleccione un pedido"
 msgstr "Selecione um pedido"
+
+#: includes/class-sorteo-package-new.php
+msgid "Datos incompletos."
+msgstr "Dados incompletos."
+
+#: includes/class-sorteo-package-new.php
+msgid "Token inválido."
+msgstr "Token inválido."
+
+#: includes/class-sorteo-package-new.php
+msgid "Producto no válido."
+msgstr "Produto inválido."
+
+#: includes/class-sorteo-package-new.php
+msgid "Cantidad no válida."
+msgstr "Quantidade inválida."
+
+#: includes/class-sorteo-package-new.php
+msgid "Este paquete no tiene categoría configurada."
+msgstr "Este pacote não tem categoria configurada."
+
+#: includes/class-sorteo-package-new.php
+msgid "No hay suficientes productos. Se necesitan %d pero solo hay %d."
+msgstr "Não há produtos suficientes. São necessários %d, mas há apenas %d."
+
+#: includes/class-sorteo-package-new.php
+msgid "%d productos agregados al carrito."
+msgstr "%d produtos adicionados ao carrinho."
+
+#: includes/class-sorteo-package-new.php
+msgid "Error al agregar productos al carrito."
+msgstr "Erro ao adicionar produtos ao carrinho."
+
+#: includes/class-sorteo-package-new.php
+msgid "Agregando..."
+msgstr "Adicionando..."
+
+#: includes/class-sorteo-package-new.php
+msgid "Error al agregar productos."
+msgstr "Erro ao adicionar produtos."
+
+#: includes/class-sorteo-package-new.php
+msgid "Error de conexión."
+msgstr "Erro de conexão."
+
+#: includes/class-sorteo-package-new.php
+msgid "Cantidad de %s:"
+msgstr "Quantidade de %s:"
+
+#: includes/class-sorteo-package-new.php
+msgid "-- Selecciona una cantidad de %s --"
+msgstr "-- Selecione uma quantidade de %s --"

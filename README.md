@@ -1,10 +1,26 @@
-# 🎲 Plugin Sorteo v1.9.28
+# 🎲 Plugin Sorteo v1.9.31
 
 Plugin completo para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas avanzadas, gestión de stock con HPOS y marcos visuales en WooCommerce.
 
-## � Registro de Cambios
+## 📋 Registro de Cambios
 
 Para ver el historial completo de versiones y cambios detallados, consulta [CHANGELOG.md](CHANGELOG.md)
+
+### 2026-02-12 (v1.9.31)
+- 🐛 **Paquete SCO Nuevo - Fix display**: Ahora muestra el nombre de la categoría en el selector de cantidad (ej: "4 stickers" en vez de "4 productos").
+- 🧹 Código optimizado: eliminados logs de debug y simplificada función save_meta.
+
+### 2026-02-12 (v1.9.30)
+- ✅ Nuevo tipo de producto "Paquete SCO (Nuevo)" para agregar X productos al azar.
+- ✅ Selector de cantidades predefinidas en frontend (4, 8, 10, 20, 25, personalizables).
+- ✅ Sin duplicados: cada producto seleccionado es único en el paquete.
+- ✅ Stock gestionado directamente por WooCommerce (no requiere sistema de reservas).
+- ✅ Agrega productos individuales al carrito y filtra productos sin stock.
+
+### 2026-02-12 (v1.9.29)
+- ✅ Nuevo tab "Precios Cantidad" en Extra WooCommerce.
+- ✅ Reglas por categoría con tramos de precio por cantidad en carrito/checkout.
+- ✅ Prioridad configurable cuando un producto pertenece a múltiples categorías.
 
 ---
 
@@ -128,7 +144,8 @@ Resultado: Aumenta 10% solo en productos de Electrónicos
 - [Gestión de Historial](#gestión-de-historial)
 - [Personalización de Mensajes](#personalización-de-mensajes)
 - [Integración con WooCommerce](#integración-con-woocommerce)
-- [Producto tipo Paquete](#📦-producto-tipo-paquete-sorteo--nuevo-v170)
+- [Producto tipo "Paquete (Sorteo)"](#📦-producto-tipo-paquete-sorteo--nuevo-v170)
+- [Producto tipo "Paquete SCO (Nuevo)"](#📦-producto-tipo-paquete-sco-nuevo--v1930)
 - [Registro de Cambios](#📝-registro-de-cambios-histórico-consolidado)
 - [Soporte](#soporte)
 
@@ -497,6 +514,67 @@ Tipo de producto personalizado de WooCommerce que permite vender paquetes con pr
 - Verifica productos comprables y disponibles
 - Bloquea añadir al carrito si faltan productos
 - Mensajes de error claros y descriptivos
+
+---
+
+## 📦 Producto tipo "Paquete SCO (Nuevo)" — v1.9.30
+
+Tipo de producto simplificado para vender paquetes donde el cliente elige **cuántos productos** desea recibir. El sistema selecciona automáticamente esa cantidad de productos **diferentes** (sin duplicados) de una categoría configurada.
+
+### 🎯 **Principales características**
+
+- **Selección aleatoria**: Cada producto del paquete es diferente
+- **Sin duplicados**: Garantiza que no hay repeticiones
+- **Stock nativo**: WooCommerce gestiona el stock directamente (sin transientes)
+- **Configuración simple**: Solo 2 pasos (categoría + opciones de cantidad)
+- **Ideal para**: Sorteos, cajas sorpresa, promociones de cantidad variable
+
+### 🎯 **Cómo Crear un Paquete SCO Nuevo**
+
+1. **Crear nuevo producto** en WooCommerce
+2. **Seleccionar tipo**: "Paquete SCO (Nuevo)" del dropdown
+3. **Configurar en pestaña "Paquete SCO Nuevo"**:
+   - **Categoría fuente**: Selecciona la categoría de donde se tomarán productos
+   - **Opciones de cantidad**: Define qué cantidades puede elegir el cliente (ej: `4,8,10,20,25`)
+4. **Definir Precio** en pestaña General
+
+### 🛒 **Experiencia de Compra**
+
+**En la página del producto**:
+- Aparece dropdown con las opciones de cantidad configuradas
+- Cliente elige cuántos productos desea (ej: "10 productos")
+- Al agregar al carrito, se aplican automáticamente
+
+**En carrito y checkout**:
+- Muestra la cantidad total de productos: "Cantidad de productos: 10"
+- Lista los productos incluidos individualmente
+- Cada combinación se trata como única (no se fusionan paquetes iguales de diferente composición)
+
+**Después del pago**:
+- Composición se guarda en el pedido
+- Stock de cada producto componente se reduce automáticamente
+- Al reembolsar/cancelar, se restituye el stock
+
+### ⚙️ **Diferencias con "Paquete (Sorteo)"**
+
+| Característica | Paquete Sorteo | Paquete SCO Nuevo |
+|---|---|---|
+| **Selección de productos** | Manual o 1+ categorías | Solo 1 categoría |
+| **Cantidad fija** | Sí (definida en producto) | No (cliente elige) |
+| **Stock del paquete** | Transientes + validación | Stock nativo WC |
+| **Duplicados** | Control avanzado | Garantizado sin duplicados |
+| **Composición** | Guardada con paquete | Generada al agregar carrito |
+| **Complejidad** | Media (admin configura mucho) | Baja (2 campos) |
+| **Casos de uso** | Paquetes sorteo complejos | Sorteos simples/promociones |
+
+### ⚙️ **Validaciones**
+
+- Verifica que la categoría tenga suficientes productos
+- Valida que el cliente seleccione una cantidad permitida  
+- Bloquea agregar si no hay suficientes productos disponibles
+- Previene agregar productos componentes directamente (evita confusiones)
+
+---
 
 **Interfaz Administrativa**:
 - Tab personalizado "Paquete Sorteo"

@@ -119,6 +119,72 @@ msgstr ""
 msgid "Ganancia del período actual"
 msgstr ""
 
+msgid "Precios Cantidad"
+msgstr ""
+
+msgid "Precios por Cantidad en Carrito"
+msgstr ""
+
+msgid "Define precios progresivos por categoría según la cantidad total de productos en el carrito."
+msgstr ""
+
+msgid "Habilitar precios por cantidad"
+msgstr ""
+
+msgid "Aplicar precios progresivos en carrito y checkout"
+msgstr ""
+
+msgid "Prioridad por categoría"
+msgstr ""
+
+msgid "Precio más bajo"
+msgstr ""
+
+msgid "Orden de reglas"
+msgstr ""
+
+msgid "Precio más alto"
+msgstr ""
+
+msgid "Si un producto pertenece a múltiples categorías con reglas, se aplicará esta prioridad."
+msgstr ""
+
+msgid "Reglas por Categoría"
+msgstr ""
+
+msgid "Cada regla define una categoría y sus tramos de precio por cantidad. El máximo puede quedar vacío para indicar \"sin límite\"."
+msgstr ""
+
+msgid "Categoría"
+msgstr ""
+
+msgid "Seleccionar categoría"
+msgstr ""
+
+msgid "Eliminar regla"
+msgstr ""
+
+msgid "Cantidad mínima"
+msgstr ""
+
+msgid "Cantidad máxima"
+msgstr ""
+
+msgid "Precio unitario"
+msgstr ""
+
+msgid "Acciones"
+msgstr ""
+
+msgid "Eliminar"
+msgstr ""
+
+msgid "Agregar tramo"
+msgstr ""
+
+msgid "Agregar regla"
+msgstr ""
+
 msgid "Próximo sorteo automático"
 msgstr ""
 
@@ -198,4 +264,56 @@ msgid "No hay pedidos elegibles"
 msgstr ""
 
 msgid "Seleccione un pedido"
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "Datos incompletos."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "Token inválido."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "Producto no válido."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "Cantidad no válida."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "Este paquete no tiene categoría configurada."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "No hay suficientes productos. Se necesitan %d pero solo hay %d."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "%d productos agregados al carrito."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "Error al agregar productos al carrito."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "Agregando..."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "Error al agregar productos."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "Error de conexión."
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "Cantidad de %s:"
+msgstr ""
+
+#: includes/class-sorteo-package-new.php
+msgid "-- Selecciona una cantidad de %s --"
 msgstr ""
