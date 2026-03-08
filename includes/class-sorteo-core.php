@@ -1661,11 +1661,12 @@ class Sorteo_SCO_Core
 					$duration = get_option('sorteo_sco_mensaje_duration', '10') * 1000; // Convertir a milisegundos
 
 					if ($notice) {
+						$notice_html = '<p>' . wp_kses_post($notice) . '</p><button class="sorteo-notice-close" onclick="this.parentElement.style.display=\'none\'">×</button>';
 						echo '<script>
 						document.addEventListener("DOMContentLoaded", function() {
 							var notice = document.createElement("div");
 							notice.className = "sorteo-immediate-notice";
-							notice.innerHTML = "<p>' . esc_js(wp_kses_post($notice)) . '</p><button class=\"sorteo-notice-close\" onclick=\"this.parentElement.style.display=\'none\'\">×</button>";
+							notice.innerHTML = ' . wp_json_encode($notice_html) . ';
 							document.body.appendChild(notice);
 							
 							// Auto-ocultar después del tiempo configurado

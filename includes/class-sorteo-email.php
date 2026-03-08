@@ -899,7 +899,7 @@ function sorteo_sco_maybe_send_downloads_email($order_id, $force = false)
 		}
 	}
 	if (! $has_pkg) {
-		$order->add_order_note(sprintf('Pedido sin paquetes: no se envió email de descargas para pedido #%s (ID %d).', $order->get_order_number(), $order->get_id()));
+		// $order->add_order_note(sprintf('Pedido sin paquetes: no se envió email de descargas para pedido #%s (ID %d).', $order->get_order_number(), $order->get_id()));
 		return;
 	}
 

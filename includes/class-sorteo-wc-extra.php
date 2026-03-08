@@ -2056,7 +2056,7 @@ class Sorteo_WC_Extra
 
         // 2) Reservas en carrito (transient bootstrap_theme_stock_reservations) para mostrar componentes + sueltos
         $transient_reservations = get_transient('bootstrap_theme_stock_reservations') ?: array();
-        $transient_expiry = 5 * MINUTE_IN_SECONDS; // 5 minutos
+        $transient_expiry = 15 * MINUTE_IN_SECONDS; // 15 minutos
         $transient_changed = false;
 
         foreach ($transient_reservations as $session_id => $items) {
@@ -2328,6 +2328,103 @@ class Sorteo_WC_Extra
     /**
      * Exportar ventas con desglose de paquetes y detección de duplicados
      */
+    private function get_package_components_from_order_item($item)
+    {
+        $ids_components = $item->get_meta('_sco_package_components_ids', true);
+        if (is_array($ids_components) && !empty($ids_components)) {
+            return $ids_components;
+        }
+
+        $manual = $this->get_manual_components_from_item_meta($item);
+        if (!empty($manual)) {
+            return $manual;
+        }
+
+        $pkg = $item->get_meta('_sco_package', true);
+        if (is_array($pkg) && !empty($pkg['components']) && is_array($pkg['components'])) {
+            return $pkg['components'];
+        }
+
+        return array();
+    }
+
+    private function get_manual_components_from_item_meta($item)
+    {
+        $raw = $item->get_meta('Productos incluidos', true);
+        if (!is_string($raw) || trim($raw) === '') {
+            $meta_data = $item->get_meta_data();
+            foreach ($meta_data as $meta_obj) {
+                $key = isset($meta_obj->key) ? strtolower((string) $meta_obj->key) : '';
+                if ($key === '' || ($key !== 'productos incluidos' && $key !== 'products included')) {
+                    continue;
+                }
+                $raw = isset($meta_obj->value) ? (string) $meta_obj->value : '';
+                if (trim($raw) !== '') {
+                    break;
+                }
+            }
+        }
+
+        if (!is_string($raw) || trim($raw) === '') {
+            return array();
+        }
+
+        $raw = trim($raw);
+        $raw = preg_replace('/\(\s*total\s*:\s*\d+\s*\)\s*$/iu', '', $raw);
+        if (!is_string($raw) || $raw === '') {
+            return array();
+        }
+
+        $parts = array_filter(array_map('trim', explode(',', $raw)));
+        if (empty($parts)) {
+            return array();
+        }
+
+        $components = array();
+        foreach ($parts as $part) {
+            $qty = 1;
+            $name = $part;
+
+            if (preg_match('/^(.*?)(?:\s*[x×]\s*(\d+))$/u', $part, $m)) {
+                $name = trim($m[1]);
+                $qty = max(1, intval($m[2]));
+            }
+
+            if ($name === '') {
+                continue;
+            }
+
+            $product_id = $this->find_product_id_by_exact_name($name);
+            if ($product_id > 0) {
+                $components[] = array(
+                    'product_id' => $product_id,
+                    'qty' => $qty,
+                    '_manual' => true,
+                );
+            }
+        }
+
+        return $components;
+    }
+
+    private function find_product_id_by_exact_name($name)
+    {
+        global $wpdb;
+
+        if (!is_string($name) || trim($name) === '') {
+            return 0;
+        }
+
+        $post_id = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT ID FROM {$wpdb->posts} WHERE post_type IN ('product','product_variation') AND post_status IN ('publish','private') AND post_title = %s ORDER BY ID ASC LIMIT 1",
+                trim($name)
+            )
+        );
+
+        return $post_id > 0 ? $post_id : 0;
+    }
+
     public function ajax_export_sales()
     {
         check_ajax_referer('sorteo_export_sales', 'nonce');
@@ -2362,8 +2459,12 @@ class Sorteo_WC_Extra
 
         $order_ids = wc_get_orders($args);
 
-        // PRIMER PASADA: Contar cuántas veces aparece cada SKU a través de TODOS los pedidos
-        $global_sku_count = array();
+        // Generar filas y marcar duplicados globales en todo el CSV (separado por origen)
+        $rows = array();
+        $global_sku_count = array(
+            'package' => array(),
+            'direct' => array(),
+        );
 
         foreach ($order_ids as $order_id) {
             $order = wc_get_order($order_id);
@@ -2374,60 +2475,32 @@ class Sorteo_WC_Extra
                 if (!$product) continue;
 
                 if ($product->get_type() === 'sco_package') {
-                    $pkg = $item->get_meta('_sco_package', true);
+                    $pkg_name = $product->get_name();
+                    $components = $this->get_package_components_from_order_item($item);
 
-                    if (!empty($pkg) && isset($pkg['components'])) {
-                        foreach ($pkg['components'] as $component) {
+                    if (!empty($components)) {
+                        foreach ($components as $component) {
                             $comp_product_id = (int) $component['product_id'];
                             $comp_product = wc_get_product($comp_product_id);
 
                             if (!$comp_product) continue;
 
                             $comp_sku = $comp_product->get_sku();
+                            $comp_qty = isset($component['qty']) ? max(1, intval($component['qty'])) : 1;
+                            $is_manual_component = !empty($component['_manual']);
 
-                            if (!isset($global_sku_count[$comp_sku])) {
-                                $global_sku_count[$comp_sku] = 0;
+                            $pkg_meta = $item->get_meta('_sco_package', true);
+                            $is_flat = is_array($pkg_meta) && isset($pkg_meta['meta']['flat']) && $pkg_meta['meta']['flat'];
+
+                            if (!$is_manual_component && !$is_flat) {
+                                $comp_qty *= max(1, intval($item->get_quantity()));
                             }
 
-                            $global_sku_count[$comp_sku]++;
-                        }
-                    }
-                } else {
-                    $sku = $product->get_sku();
-
-                    if (!isset($global_sku_count[$sku])) {
-                        $global_sku_count[$sku] = 0;
-                    }
-
-                    $global_sku_count[$sku]++;
-                }
-            }
-        }
-
-        // SEGUNDA PASADA: Generar filas y marcar duplicados según conteo global
-        $rows = array();
-
-        foreach ($order_ids as $order_id) {
-            $order = wc_get_order($order_id);
-            if (!$order) continue;
-
-            foreach ($order->get_items() as $item) {
-                $product = $item->get_product();
-                if (!$product) continue;
-
-                if ($product->get_type() === 'sco_package') {
-                    $pkg = $item->get_meta('_sco_package', true);
-                    $pkg_name = $product->get_name();
-
-                    if (!empty($pkg) && isset($pkg['components'])) {
-                        foreach ($pkg['components'] as $component) {
-                            $comp_product_id = (int) $component['product_id'];
-                            $comp_product = wc_get_product($comp_product_id);
-
-                            if (!$comp_product) continue;
-
-                            $comp_sku = $comp_product->get_sku();
-                            $is_duplicate = isset($global_sku_count[$comp_sku]) && $global_sku_count[$comp_sku] > 1;
+                            $dedupe_key = trim((string) $comp_sku) !== '' ? strtolower(trim((string) $comp_sku)) : ('id:' . $comp_product_id);
+                            if (!isset($global_sku_count['package'][$dedupe_key])) {
+                                $global_sku_count['package'][$dedupe_key] = 0;
+                            }
+                            $global_sku_count['package'][$dedupe_key] += max(1, intval($comp_qty));
 
                             $rows[] = array(
                                 'order_id' => $order->get_order_number(),
@@ -2437,18 +2510,25 @@ class Sorteo_WC_Extra
                                 'product_name' => $comp_product->get_name(),
                                 'product_id' => $comp_product_id,
                                 'product_sku' => $comp_sku,
-                                'quantity' => 1,
+                                'quantity' => $comp_qty,
                                 'price' => $comp_product->get_price(),
                                 'source' => 'Paquete: ' . $pkg_name,
-                                'is_duplicate' => $is_duplicate ? '⚠️ SÍ' : 'No',
+                                'is_duplicate' => 'No',
+                                '_source_bucket' => 'package',
+                                '_dedupe_key' => $dedupe_key,
                             );
                         }
                     }
                 } else {
                     $product_id = $product->get_id();
                     $sku = $product->get_sku();
+                    $row_qty = max(1, intval($item->get_quantity()));
+                    $dedupe_key = trim((string) $sku) !== '' ? strtolower(trim((string) $sku)) : ('id:' . $product_id);
 
-                    $is_duplicate = isset($global_sku_count[$sku]) && $global_sku_count[$sku] > 1;
+                    if (!isset($global_sku_count['direct'][$dedupe_key])) {
+                        $global_sku_count['direct'][$dedupe_key] = 0;
+                    }
+                    $global_sku_count['direct'][$dedupe_key] += $row_qty;
 
                     $rows[] = array(
                         'order_id' => $order->get_order_number(),
@@ -2458,14 +2538,25 @@ class Sorteo_WC_Extra
                         'product_name' => $product->get_name(),
                         'product_id' => $product_id,
                         'product_sku' => $sku,
-                        'quantity' => $item->get_quantity(),
+                        'quantity' => $row_qty,
                         'price' => $product->get_price(),
                         'source' => 'Venta directa',
-                        'is_duplicate' => $is_duplicate ? '⚠️ SÍ' : 'No',
+                        'is_duplicate' => 'No',
+                        '_source_bucket' => 'direct',
+                        '_dedupe_key' => $dedupe_key,
                     );
                 }
             }
         }
+
+        foreach ($rows as &$row) {
+            $bucket = isset($row['_source_bucket']) ? $row['_source_bucket'] : 'direct';
+            $key = isset($row['_dedupe_key']) ? $row['_dedupe_key'] : '';
+            $is_duplicate = isset($global_sku_count[$bucket][$key]) && $global_sku_count[$bucket][$key] > 1;
+            $row['is_duplicate'] = $is_duplicate ? '⚠️ SÍ' : 'No';
+            unset($row['_source_bucket'], $row['_dedupe_key']);
+        }
+        unset($row);
 
         // Generar CSV
         $csv_headers = array(
@@ -2677,6 +2768,23 @@ class Sorteo_WC_Extra
                         );
 
                         $item->update_meta_data('_sco_package', $pkg);
+
+                        $ids_components = array();
+                        foreach ($pkg['components'] as $comp) {
+                            if (empty($comp['product_id'])) {
+                                continue;
+                            }
+
+                            $ids_components[] = array(
+                                'product_id' => intval($comp['product_id']),
+                                'qty' => isset($comp['qty']) ? max(1, intval($comp['qty'])) : 1,
+                            );
+                        }
+
+                        if (!empty($ids_components)) {
+                            $item->update_meta_data('_sco_package_components_ids', $ids_components);
+                        }
+
                         $item->save();
 
                         // Agregar nota al pedido (una sola vez por pedido)

@@ -636,6 +636,105 @@ function sco_package_display_cart_item_data($item_data, $cart_item)
 
 // 12. Save composition to order item meta
 add_action('woocommerce_checkout_create_order_line_item', 'sco_package_add_order_item_meta', 10, 4);
+
+function sco_pkg_normalize_components_ids($components)
+{
+    $normalized = array();
+
+    if (!is_array($components)) {
+        return $normalized;
+    }
+
+    foreach ($components as $comp) {
+        if (!is_array($comp)) {
+            continue;
+        }
+
+        $pid = isset($comp['product_id']) ? intval($comp['product_id']) : 0;
+        if ($pid <= 0) {
+            continue;
+        }
+
+        $qty = isset($comp['qty']) ? max(1, intval($comp['qty'])) : 1;
+
+        if (!isset($normalized[$pid])) {
+            $normalized[$pid] = array(
+                'product_id' => $pid,
+                'qty' => 0,
+            );
+        }
+
+        $normalized[$pid]['qty'] += $qty;
+    }
+
+    return array_values($normalized);
+}
+
+function sco_pkg_get_manual_components_from_order_item_meta($item)
+{
+    $raw = $item->get_meta('Productos incluidos', true);
+
+    if (!is_string($raw) || trim($raw) === '') {
+        $meta_data = $item->get_meta_data();
+        foreach ($meta_data as $meta_obj) {
+            $key = isset($meta_obj->key) ? strtolower((string) $meta_obj->key) : '';
+            if ($key === '' || ($key !== 'productos incluidos' && $key !== 'products included')) {
+                continue;
+            }
+
+            $raw = isset($meta_obj->value) ? (string) $meta_obj->value : '';
+            if (trim($raw) !== '') {
+                break;
+            }
+        }
+    }
+
+    if (!is_string($raw) || trim($raw) === '') {
+        return array();
+    }
+
+    $raw = trim($raw);
+    $raw = preg_replace('/\(\s*total\s*:\s*\d+\s*\)\s*$/iu', '', $raw);
+    if (!is_string($raw) || $raw === '') {
+        return array();
+    }
+
+    $parts = array_filter(array_map('trim', explode(',', $raw)));
+    if (empty($parts)) {
+        return array();
+    }
+
+    $components = array();
+    foreach ($parts as $part) {
+        $qty = 1;
+        $name = $part;
+
+        if (preg_match('/^(.*?)(?:\s*[x×]\s*(\d+))$/u', $part, $m)) {
+            $name = trim($m[1]);
+            $qty = max(1, intval($m[2]));
+        }
+
+        if ($name === '') {
+            continue;
+        }
+
+        $id = wc_get_product_id_by_sku($name);
+        if ($id <= 0) {
+            $candidate = get_page_by_title($name, OBJECT, array('product', 'product_variation'));
+            $id = $candidate ? intval($candidate->ID) : 0;
+        }
+
+        if ($id > 0) {
+            $components[] = array(
+                'product_id' => $id,
+                'qty' => $qty,
+            );
+        }
+    }
+
+    return sco_pkg_normalize_components_ids($components);
+}
+
 function sco_package_add_order_item_meta($item, $cart_item_key, $values, $order)
 {
     if (!isset($values['sco_package'])) {
@@ -644,6 +743,7 @@ function sco_package_add_order_item_meta($item, $cart_item_key, $values, $order)
 
     $pkg = $values['sco_package'];
     $item->add_meta_data('_sco_package', $pkg, true);
+    $item->add_meta_data('_sco_package_components_ids', sco_pkg_normalize_components_ids($pkg['components']), true);
 
     // Add friendly display - soporta modo "flat" (únicos globales)
     $is_flat = isset($pkg['meta']['flat']) && $pkg['meta']['flat'];
@@ -673,6 +773,43 @@ function sco_package_add_order_item_meta($item, $cart_item_key, $values, $order)
             implode(', ', $labels) . ' (' . sprintf(__('total: %d', 'sorteo-sco'), $total_products) . ')',
             true
         );
+    }
+}
+
+add_action('woocommerce_saved_order_items', 'sco_pkg_sync_components_ids_on_order_save', 20, 2);
+function sco_pkg_sync_components_ids_on_order_save($order_id, $items)
+{
+    $order = wc_get_order($order_id);
+    if (!$order) {
+        return;
+    }
+
+    $changed = false;
+
+    foreach ($order->get_items() as $item) {
+        $product = $item->get_product();
+        if (!$product || $product->get_type() !== 'sco_package') {
+            continue;
+        }
+
+        $components = sco_pkg_get_manual_components_from_order_item_meta($item);
+
+        if (empty($components)) {
+            $pkg = $item->get_meta('_sco_package', true);
+            if (is_array($pkg) && !empty($pkg['components']) && is_array($pkg['components'])) {
+                $components = sco_pkg_normalize_components_ids($pkg['components']);
+            }
+        }
+
+        if (!empty($components)) {
+            $item->update_meta_data('_sco_package_components_ids', $components);
+            $item->save();
+            $changed = true;
+        }
+    }
+
+    if ($changed) {
+        $order->save();
     }
 }
 

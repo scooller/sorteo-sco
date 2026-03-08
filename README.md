@@ -1,10 +1,21 @@
-# 🎲 Plugin Sorteo v1.9.31
+# 🎲 Plugin Sorteo v1.9.33
 
 Plugin completo para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas avanzadas, gestión de stock con HPOS y marcos visuales en WooCommerce.
 
 ## 📋 Registro de Cambios
 
 Para ver el historial completo de versiones y cambios detallados, consulta [CHANGELOG.md](CHANGELOG.md)
+
+### 2026-03-07 (v1.9.33)
+- 🐛 **Fix exportación Extra WooCommerce (Exportar Ventas con Desglose de Paquetes)**: misma prioridad de datos del pedido editado para reflejar reemplazos manuales.
+
+### 2026-03-08 (v1.9.33)
+- ✅ **Ajuste de duplicados en Exportar Ventas (Extra WooCommerce)**: detección global en todo el CSV exportado.
+- ✅ **Sin falsos positivos por origen**: se separa la comparación entre `Paquete: ...` y `Venta directa`.
+- ℹ️ **Usuario+Compras**: se mantiene con la lógica original (sin los cambios de esta iteración).
+
+### 2026-03-01 (v1.9.32)
+- 🐛 **Fix**: Mensaje de sorteo automático inmediato no renderizaba HTML. Se reemplazó `esc_js()` por `wp_json_encode()` para preservar etiquetas HTML en `innerHTML`.
 
 ### 2026-02-12 (v1.9.31)
 - 🐛 **Paquete SCO Nuevo - Fix display**: Ahora muestra el nombre de la categoría en el selector de cantidad (ej: "4 stickers" en vez de "4 productos").

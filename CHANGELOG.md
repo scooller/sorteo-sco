@@ -1,7 +1,41 @@
 # 📋 Changelog - Plugin Sorteo SCO
 
 **Autor**: scooller
-**Última actualización**: 2026-02-12
+**Última actualización**: 2026-03-08
+
+---
+
+## [1.9.33] - 2026-03-07
+
+### 🐛 Corrección
+
+**Exportar Ventas con Desglose de Paquetes no reflejaba edición manual del pedido**:
+- ✅ Fix: misma lógica de prioridad de datos (meta manual del ítem primero, `_sco_package` como respaldo).
+- ✅ Resultado: el desglose en CSV de Extra WooCommerce muestra los productos actuales del pedido editado.
+- ✅ Archivo: `includes/class-sorteo-wc-extra.php`.
+
+### 🔧 Ajuste
+
+**Detección de duplicados en Exportar Ventas**:
+- ✅ Ajuste final: los duplicados se calculan de forma global en todo el CSV exportado.
+- ✅ Separa origen para evitar falsos positivos: `Paquete: ...` y `Venta directa` se evalúan por separado.
+- ✅ Archivo: `includes/class-sorteo-wc-extra.php`.
+
+### ℹ️ Nota
+
+- `Usuario+Compras CSV` se mantiene con la lógica original en esta versión.
+
+---
+
+## [1.9.32] - 2026-03-01
+
+### 🐛 Corrección
+
+**Mensaje de sorteo automático no renderizaba HTML**:
+- ✅ Fix: El aviso inmediato de sorteo automático mostraba etiquetas HTML como texto plano.
+- ✅ Causa: `esc_js()` escapaba caracteres `<`, `>` impidiendo que `innerHTML` renderizara el HTML.
+- ✅ Solución: Reemplazado `esc_js(wp_kses_post($notice))` por `wp_json_encode()` que preserva las etiquetas HTML para JavaScript mientras mantiene la sanitización de `wp_kses_post()`.
+- ✅ Archivo: `includes/class-sorteo-core.php` (línea ~1664).
 
 ---
 

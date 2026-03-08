@@ -2,7 +2,7 @@
 /*
 Plugin Name: Sorteo
 Description: Plugin para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas y marcos visuales en WooCommerce.
-Version: 1.9.31
+Version: 1.9.33
 Author: scooller
 Author URI: https://scooller.bio
 Plugin URI: https://scooller.bio
@@ -22,7 +22,7 @@ add_action('before_woocommerce_init', function () {
 });
 
 // Definir constantes del plugin
-define('SORTEO_SCO_VERSION', '1.9.31');
+define('SORTEO_SCO_VERSION', '1.9.33');
 define('SORTEO_SCO_PLUGIN_FILE', __FILE__);
 define('SORTEO_SCO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SORTEO_SCO_PLUGIN_URL', plugin_dir_url(__FILE__));
