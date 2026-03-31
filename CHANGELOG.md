@@ -1,7 +1,145 @@
 # 📋 Changelog - Plugin Sorteo SCO
 
 **Autor**: scooller
-**Última actualización**: 2026-03-08
+**Última actualización**: 2026-03-15
+
+---
+
+## [1.9.37] - 2026-03-15
+
+### 🐛 Fix crítico: productos duplicados entre pedidos
+
+**Problema**: El Paquete SCO Nuevo (`paquete_sco_new`) solo excluía productos del carrito del PROPIO usuario al seleccionar productos aleatorios. No consultaba productos ya vendidos en pedidos activos ni reservados en carritos de OTROS usuarios. Resultado: el mismo sticker (stock=1) se asignaba a múltiples clientes.
+
+**Cambios en `class-sorteo-package-new.php`**:
+- 🐛 Step 1 handler: ahora llama `sco_pkg_get_committed_product_ids()` para excluir productos ya vendidos en pedidos activos (pending/processing/on-hold/completed) y reservados en carritos de otros usuarios.
+- 🐛 Step 2 handler: después de `add_to_cart()`, llama `sco_pkg_sync_reservations_with_cart(true)` para registrar inmediatamente el producto en el transient de reservas.
+- 🐛 Step 2 handler: llama `sco_pkg_reset_committed_cache()` para invalidar el cache estático tras cada adición.
+
+**Cambios en `class-sorteo-package-simple.php`**:
+- 🐛 Hook `woocommerce_add_to_cart`: expandido para sincronizar reservas en productos `simple` y `variable` (antes solo `sco_package`). Los productos individuales del paquete nuevo ahora se registran en el transient.
+- 🐛 `sco_pkg_sync_reservations_with_cart()`: eliminado filtro `managing_stock()` — ahora reserva TODOS los productos del carrito, no solo los que gestionan stock. Los stickers con stock=1 pero sin "gestionar stock" activo ahora se reservan correctamente.
+
+---
+
+## [1.9.36] - 2026-03-14
+
+### 🐛 Fix crítico: memoria agotada en AJAX requests
+
+**Problema**: Los AJAX requests del Paquete SCO Nuevo (y cualquier otro AJAX) pasaban por `admin-ajax.php`, lo que disparaba `admin_init` → `maybe_run_auto_draw()` que ejecuta `wc_get_orders(['limit' => -1])` cargando TODAS las órdenes del sitio en memoria. Con muchas órdenes, esto agotaba los 512MB antes de que el handler AJAX llegara a ejecutarse.
+
+**Funciones corregidas en `class-sorteo-core.php`**:
+- 🐛 `maybe_run_auto_draw()` — ahora retorna inmediatamente si `wp_doing_ajax()`. Solo necesita correr en páginas de admin.
+- 🐛 `update_metrics_on_admin_init()` — ahora retorna inmediatamente si `wp_doing_ajax()`. Solo necesita correr en la pantalla del plugin.
+- 🐛 `check_recent_purchase()` — ahora retorna inmediatamente si `wp_doing_ajax()`. Solo necesita correr en page loads de frontend.
+
+**Mejora adicional en `class-sorteo-package-new.php`**:
+- ⚡ Eliminado `wc_get_product()` del handler Step 1. El tipo de producto se verifica via taxonomía `product_type` (~100 bytes vs ~100KB).
+- ⚡ Reemplazado `WC()->cart->get_cart()` (que carga objetos producto por cada item) con `WC()->session->get('cart')` (datos raw de sesión).
+
+---
+
+## [1.9.35] - 2026-03-14
+
+### ⚡ Optimización Paquete SCO Nuevo
+
+**Reescritura de `sco_pkg_new_get_category_products()`**:
+- ⚡ Eliminadas hasta 1200 llamadas a `wc_get_product()` por solicitud. Toda la validación se movió a SQL con `WP_Query` + `meta_query` (`_stock_status`, `_price`) + `tax_query` (`product_type NOT IN`).
+- ⚡ Se usa `fields => 'ids'` para obtener solo IDs (~8 bytes c/u vs ~100KB por objeto producto).
+- ⚡ Reducción de memoria: de ~60-240MB a <5MB. De ~2400 queries SQL a 1.
+- ✅ Archivo: `includes/class-sorteo-package-new.php`.
+
+**Batch add-to-cart sin recálculo intermedio**:
+- ⚡ Arquitectura split-AJAX: request #1 obtiene IDs de productos (query SQL liviana), requests #2..N agregan 1 producto al carrito cada uno.
+- ⚡ Cada request PHP agrega solo 1 producto → la memoria se libera entre requests. Elimina fatal error de 512MB.
+- ⚡ Progreso visual en el botón: "Agregando 5 / 25..." con spinner animado.
+- ⚡ Anterior enfoque (loop de 25 `add_to_cart` en 1 request) acumulaba objetos WC_Product + WC_Cart_Totals + session writes en memoria.
+
+**Cart-awareness en AJAX handler**:
+- ✅ Antes de seleccionar productos, se excluyen los que ya están en el carrito del usuario.
+- ✅ Evita duplicados cuando el usuario hace click rápido consecutivo.
+
+**Debounce en frontend JS**:
+- ✅ Guard `$form.data('sco-submitting')` bloquea envíos duplicados por doble-click.
+- ✅ Flag se resetea en callbacks de success y error.
+
+### 🔧 Mantenimiento
+
+- 🔧 Docblock explicativo en hooks de stock management (secciones 12-16) que actualmente no se ejecutan. Reservados para futura implementación de cart items compuestos.
+
+---
+
+## [1.9.34] - 2026-03-12
+
+### 🐛 Correcciones
+
+**Exportar Ventas (Extra WooCommerce) - múltiples correcciones críticas**:
+- 🐛 **Fix filtro de fechas**: el rango con `...` perdía todos los pedidos del último día. Se corrigió usando `+1 day` en la fecha final, compatible con HPOS.
+- 🐛 **Fix filtro de categorías para variaciones**: las variaciones de producto (`product_variation`) no tienen categorías propias. Ahora hace fallback al producto padre con `wp_get_post_parent_id()`.
+- 🐛 **Fix productos eliminados omitidos**: cuando un producto fue eliminado/trashado, `$item->get_product()` retornaba `null` y el pedido completo se omitía del CSV. Ahora detecta el tipo por meta y emite una fila con datos del item.
+- 🐛 **Fix paquetes sin componentes resolubles**: si `get_package_components_from_order_item()` no podía resolver ningún componente, el paquete desaparecía silenciosamente. Ahora emite fallback con nombre del paquete + lista cruda de "Productos incluidos".
+- ✅ Archivos: `includes/class-sorteo-wc-extra.php`, `includes/class-sorteo-export.php`.
+
+### 🆕 Mejoras en Exportación
+
+**Nuevas columnas en el CSV**:
+- ✅ **Tipo Producto**: muestra `simple`, `variable`, `variation`, `sco_package`, `eliminado`, etc.
+- ✅ **Categoría**: nombres de categoría separados por `|`, con fallback al padre para variaciones.
+- ✅ **Estado Pedido**: nombre legible del estado (`Completado`, `Procesando`, etc.).
+
+**Detección de duplicados histórica**:
+- ✅ La detección de duplicados ahora compara contra TODAS las órdenes históricas, no solo el rango exportado.
+- ✅ Si un producto se vendió en enero y de nuevo en marzo, al exportar solo marzo aparece marcado como duplicado.
+
+**Nombre de archivo con rango de fechas**:
+- ✅ El CSV/ZIP ahora incluye el rango en el nombre: `export_ventas_2026-01-01_a_2026-03-12.csv`.
+- ✅ Variantes: `desde_FECHA`, `hasta_FECHA`, `todo_FECHA` según los filtros usados.
+
+### ⚡ Optimización
+
+**Rendimiento en exports grandes**:
+- ✅ `@set_time_limit(0)` y `wp_raise_memory_limit('admin')` al iniciar el export.
+- ✅ `timeout: 0` en el AJAX de jQuery para evitar corte de conexión del navegador.
+- ✅ Sin filtro de fecha: reutiliza IDs filtrados como históricos (elimina query duplicada).
+- ✅ Sin filtro de fecha: combina conteo de SKU + filas en una sola pasada (de 3 a 2 pasadas).
+- ✅ Cálculo de `$order_status_label` una vez por pedido en vez de por cada fila.
+
+### 🔧 Mejoras internas
+
+**Búsqueda de productos mejorada (`find_product_id_by_exact_name`)**:
+- ✅ Ahora busca en 3 pasos: título exacto → SKU derivado → LIKE.
+- ✅ Incluye productos en `draft` y `trash` (para pedidos con productos eliminados).
+
+**Lectura de componentes de paquetes (`class-sorteo-export.php`)**:
+- ✅ Nuevo método `get_package_components()` con 3 fuentes: `_sco_package_components_ids`, "Productos incluidos" (manual), `_sco_package` (fallback).
+- ✅ Misma prioridad de fuentes que `class-sorteo-wc-extra.php`.
+
+---
+
+## [1.9.33] - 2026-03-09
+
+### ⚡ Optimización
+
+**Paquete SCO (Nuevo) - reducción de consumo de memoria**:
+- ✅ Se reemplazó la carga completa de productos de categoría (`numberposts => -1`) por consulta paginada y limitada.
+- ✅ Se mantienen validaciones de comprable/en stock, con menor pico de memoria en categorías grandes.
+- ✅ Archivo: `includes/class-sorteo-package-new.php`.
+
+**Exportar Ventas (Extra WooCommerce) - reducción de pico de memoria**:
+- ✅ Refactor a dos pasadas: primero conteo global de duplicados, luego escritura de CSV.
+- ✅ Se evita acumular todas las filas en un gran array antes de exportar.
+- ✅ Salida en `php://temp` con límite de memoria para mejorar estabilidad.
+- ✅ Archivo: `includes/class-sorteo-wc-extra.php`.
+
+### 🆕 Exportación
+
+**Exportar Ventas (Extra WooCommerce) - filtros y archivos grandes**:
+- ✅ Nuevo filtro por categoría (selección múltiple) en la interfaz de exportación.
+- ✅ Filtro aplicado a productos directos y componentes de paquetes en el backend.
+- ✅ Exportación automática en ZIP con múltiples CSV cuando el volumen supera el umbral.
+- ✅ Umbral de filas configurable desde la UI de exportación (persistido en opción).
+- ✅ Mejora de estabilidad para evitar errores por memoria en exportes muy grandes.
+- ✅ Archivo: `includes/class-sorteo-wc-extra.php`.
 
 ---
 
@@ -18,7 +156,7 @@
 
 **Detección de duplicados en Exportar Ventas**:
 - ✅ Ajuste final: los duplicados se calculan de forma global en todo el CSV exportado.
-- ✅ Separa origen para evitar falsos positivos: `Paquete: ...` y `Venta directa` se evalúan por separado.
+- ✅ Criterio único por SKU/ID: se marca duplicado aunque aparezca entre `Paquete: ...` y `Venta directa`.
 - ✅ Archivo: `includes/class-sorteo-wc-extra.php`.
 
 ### ℹ️ Nota

@@ -10,20 +10,23 @@ class Sorteo_SCO_Export {
 		$periodo_fin = isset($args['periodo_fin']) ? $args['periodo_fin'] : get_option('sorteo_sco_periodo_fin');
 		$categorias = isset($args['categorias']) ? $args['categorias'] : get_option('sorteo_sco_categorias');
 		$productos = isset($args['productos']) ? $args['productos'] : get_option('sorteo_sco_productos_especiales');
-		
+
 		$args_wc = [
 			'limit' => -1,
+			'return' => 'ids',
 			'status' => array('wc-completed','wc-processing'),
 		];
-		
-		// Solo agregar filtro de fecha si ambas fechas están configuradas
+
 		if ($periodo_inicio && $periodo_fin) {
 			$args_wc['date_created'] = $periodo_inicio . '...' . $periodo_fin;
 		}
-		
-		$orders = function_exists('wc_get_orders') ? wc_get_orders($args_wc) : [];
+
+		$order_ids = function_exists('wc_get_orders') ? wc_get_orders($args_wc) : [];
 		$winners = [];
-		foreach ($orders as $order) {
+		foreach ($order_ids as $i => $order_id) {
+			$order = wc_get_order($order_id);
+			if (!$order) continue;
+
 			foreach ($order->get_items() as $item) {
 				$product_id = $item->get_product_id();
 				if ($productos && !in_array($product_id, explode(',', $productos))) continue;
@@ -40,6 +43,8 @@ class Sorteo_SCO_Export {
 					}
 				}
 			}
+
+			unset($order);
 		}
 		// Generar CSV
 		$csv = "user_id,email\n";
@@ -58,25 +63,24 @@ class Sorteo_SCO_Export {
 		
 		$args_wc = [
 			'limit' => -1,
+			'return' => 'ids',
 			'status' => array('wc-completed','wc-processing'),
 		];
-		
-		// Solo agregar filtro de fecha si ambas fechas están configuradas
+
 		if ($periodo_inicio && $periodo_fin) {
 			$args_wc['date_created'] = $periodo_inicio . '...' . $periodo_fin;
 		}
-		
-		$orders = function_exists('wc_get_orders') ? wc_get_orders($args_wc) : [];
+
+		$order_ids = function_exists('wc_get_orders') ? wc_get_orders($args_wc) : [];
 		$purchase_data = [];
-		
-		// Verificar que tenemos pedidos
-		if (empty($orders)) {
+
+		if (empty($order_ids)) {
 			return "ID Usuario,Nombre Usuario,Email Usuario,ID Pedido,Fecha Compra,ID Producto,Nombre Producto,Cantidad,Total Línea,Total Pedido,Estado Pedido,Categorías\n";
 		}
-		
-		foreach ($orders as $order) {
-			// Verificar que el pedido es válido
-			if (!is_object($order) || !method_exists($order, 'get_items')) {
+
+		foreach ($order_ids as $i => $order_id) {
+			$order = wc_get_order($order_id);
+			if (!$order || !is_object($order) || !method_exists($order, 'get_items')) {
 				continue;
 			}
 			$user_id = $order->get_customer_id();
@@ -117,11 +121,11 @@ class Sorteo_SCO_Export {
 				$is_package = ($product->get_type() === 'sco_package');
 				// Si es paquete, desglosar componentes
 				if ($is_package) {
-					$pkg = $item->get_meta('_sco_package', true);
+					$components = self::get_package_components($item);
 					$package_name = str_replace(array(',', '"', "'"), '', $product->get_name());
-					if (!empty($pkg) && !empty($pkg['components'])) {
+					if (!empty($components)) {
 						$is_first = true;
-						foreach ($pkg['components'] as $comp) {
+						foreach ($components as $comp) {
 							$comp_product = wc_get_product($comp['product_id']);
 							if (!$comp_product) continue;
 							$comp_name = str_replace(array(',', '"', "'"), '', $comp_product->get_name());
@@ -245,8 +249,9 @@ class Sorteo_SCO_Export {
 					}
 				}
 			}
+			unset($order);
 		}
-		
+
 		// Filtrar datos vacíos o inválidos con validación estricta
 		$valid_purchase_data = array();
 		
@@ -320,6 +325,67 @@ class Sorteo_SCO_Export {
 		$csv = implode("\n", $csv_lines) . "\n";
 		
 		return $csv;
+	}
+
+	private static function get_package_components( $item ) {
+		$ids_components = $item->get_meta('_sco_package_components_ids', true);
+		if (is_array($ids_components) && !empty($ids_components)) {
+			return $ids_components;
+		}
+
+		$raw = $item->get_meta('Productos incluidos', true);
+		if (!is_string($raw) || trim($raw) === '') {
+			$meta_data = $item->get_meta_data();
+			foreach ($meta_data as $meta_obj) {
+				$key = isset($meta_obj->key) ? strtolower((string) $meta_obj->key) : '';
+				if ($key === 'productos incluidos' || $key === 'products included') {
+					$raw = isset($meta_obj->value) ? (string) $meta_obj->value : '';
+					if (trim($raw) !== '') {
+						break;
+					}
+				}
+			}
+		}
+
+		if (is_string($raw) && trim($raw) !== '') {
+			$raw = trim($raw);
+			$raw = preg_replace('/\(\s*total\s*:\s*\d+\s*\)\s*$/iu', '', $raw);
+			if (is_string($raw) && $raw !== '') {
+				$parts = array_filter(array_map('trim', explode(',', $raw)));
+				$components = array();
+				foreach ($parts as $part) {
+					$qty = 1;
+					$name = $part;
+					if (preg_match('/^(.*?)(?:\s*[x×]\s*(\d+))$/u', $part, $m)) {
+						$name = trim($m[1]);
+						$qty = max(1, intval($m[2]));
+					}
+					if ($name === '') {
+						continue;
+					}
+					global $wpdb;
+					$pid = (int) $wpdb->get_var(
+						$wpdb->prepare(
+							"SELECT ID FROM {$wpdb->posts} WHERE post_type IN ('product','product_variation') AND post_status IN ('publish','private') AND post_title = %s ORDER BY ID ASC LIMIT 1",
+							$name
+						)
+					);
+					if ($pid > 0) {
+						$components[] = array('product_id' => $pid, 'qty' => $qty);
+					}
+				}
+				if (!empty($components)) {
+					return $components;
+				}
+			}
+		}
+
+		$pkg = $item->get_meta('_sco_package', true);
+		if (is_array($pkg) && !empty($pkg['components']) && is_array($pkg['components'])) {
+			return $pkg['components'];
+		}
+
+		return array();
 	}
 
 	public static function download_winners_csv( $args = array() ) {

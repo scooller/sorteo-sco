@@ -2,7 +2,7 @@
 /*
 Plugin Name: Sorteo
 Description: Plugin para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas y marcos visuales en WooCommerce.
-Version: 1.9.33
+Version: 1.9.37
 Author: scooller
 Author URI: https://scooller.bio
 Plugin URI: https://scooller.bio
@@ -22,7 +22,7 @@ add_action('before_woocommerce_init', function () {
 });
 
 // Definir constantes del plugin
-define('SORTEO_SCO_VERSION', '1.9.33');
+define('SORTEO_SCO_VERSION', '1.9.35');
 define('SORTEO_SCO_PLUGIN_FILE', __FILE__);
 define('SORTEO_SCO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SORTEO_SCO_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -357,7 +357,36 @@ function sorteo_sco_manage_stock_on_order_complete($order_id, $order = null)
 		));
 	}
 
+	// Limpiar reservas residuales del pedido en wc_reserved_stock.
+	sorteo_sco_cleanup_order_reservations($order_id);
+
 	$order->save();
+}
+
+/**
+ * Elimina reservas residuales de un pedido en la tabla nativa de WooCommerce.
+ */
+function sorteo_sco_cleanup_order_reservations($order_id)
+{
+	global $wpdb;
+
+	$order_id = absint($order_id);
+	if ($order_id <= 0) {
+		return;
+	}
+
+	$table = $wpdb->prefix . 'wc_reserved_stock';
+	$table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table'") === $table;
+	if (!$table_exists) {
+		return;
+	}
+
+	$wpdb->query(
+		$wpdb->prepare(
+			"DELETE FROM {$table} WHERE order_id = %d",
+			$order_id
+		)
+	);
 }
 
 /**
@@ -456,7 +485,7 @@ function sorteo_sco_reserve_stock_on_checkout($order)
 			}
 
 			$order->update_meta_data('_stock_reserved', 'yes');
-			$order->save();
+			$order->save_meta_data();
 
 			if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
 				error_log("=== SCO RESERVE STOCK END - SUCCESS === Order: $order_id");
@@ -493,6 +522,7 @@ function sorteo_sco_release_reserved_stock($order_id)
 			wc_release_stock_for_order($order);
 			$order->delete_meta_data('_stock_reserved');
 			$order->save();
+			sorteo_sco_cleanup_order_reservations($order_id);
 		} catch (Exception $e) {
 			error_log('Sorteo SCO: ERROR al liberar stock - ' . $e->getMessage());
 		}

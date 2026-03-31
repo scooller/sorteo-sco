@@ -43,20 +43,10 @@ class Sorteo_SCO_Core
 		add_action('admin_init', [$this, 'update_metrics_on_admin_init']);
 		// Actualizar métricas automáticamente cuando cambian estados de pedidos
 		add_action('woocommerce_order_status_changed', [$this, 'update_metrics_on_order_change'], 10, 3);
-		// Actualizar métricas cuando se crea un nuevo pedido
-		add_action('woocommerce_new_order', [$this, 'update_metrics']);
-		// Actualizar métricas cuando se modifica un pedido  
-		add_action('woocommerce_update_order', [$this, 'update_metrics']);
 		// Actualizar métricas cuando se guarda un pedido (incluye nuevos y editados)
 		add_action('woocommerce_process_shop_order_meta', [$this, 'update_metrics']);
 		// Actualizar métricas cuando se crea un pedido desde admin
 		add_action('woocommerce_admin_order_data_after_order_details', [$this, 'update_metrics']);
-		// Actualizar métricas cuando se completa el checkout (pedidos nuevos)
-		add_action('woocommerce_checkout_order_processed', [$this, 'update_metrics']);
-		// Actualizar métricas cuando se procesa un pago
-		add_action('woocommerce_payment_complete', [$this, 'update_metrics']);
-		// Hook adicional para asegurar actualización en cualquier cambio de estado importante
-		add_action('transition_post_status', [$this, 'update_metrics_on_post_transition'], 10, 3);
 		// Hook para when order status is updated via admin
 		add_action('woocommerce_order_edit_status', [$this, 'update_metrics']);
 	}
@@ -359,6 +349,10 @@ class Sorteo_SCO_Core
 	 */
 	public function update_metrics()
 	{
+		if (wp_doing_ajax()) {
+			return;
+		}
+
 		$draws_history = get_option('sorteo_sco_draws_history', array());
 
 		// Contar sorteos realizados
@@ -377,6 +371,10 @@ class Sorteo_SCO_Core
 	 */
 	public function update_metrics_on_order_change($order_id, $old_status, $new_status)
 	{
+		if (wp_doing_ajax()) {
+			return;
+		}
+
 		// Obtener estados configurados
 		$order_statuses = get_option('sorteo_sco_order_statuses', array('wc-completed', 'wc-processing'));
 
@@ -668,6 +666,11 @@ class Sorteo_SCO_Core
 	 */
 	public function update_metrics_on_admin_init()
 	{
+		// No ejecutar durante AJAX — esta función es solo para la pantalla de admin del plugin
+		if (wp_doing_ajax()) {
+			return;
+		}
+
 		// Solo actualizar si estamos en la página del plugin o no se han actualizado recientemente
 		$current_screen = get_current_screen();
 		if ($current_screen && strpos($current_screen->id, 'sorteo-sco') !== false) {
@@ -781,6 +784,11 @@ class Sorteo_SCO_Core
 	 */
 	public function maybe_run_auto_draw()
 	{
+		// No ejecutar durante AJAX — esta función es solo para admin UI
+		if (wp_doing_ajax()) {
+			return;
+		}
+
 		$min_ganancia = get_option('sorteo_sco_min_ganancia');
 		$periodo_inicio = get_option('sorteo_sco_periodo_inicio');
 		$periodo_fin = get_option('sorteo_sco_periodo_fin');
@@ -1629,6 +1637,11 @@ class Sorteo_SCO_Core
 	 */
 	public function check_recent_purchase()
 	{
+		// No ejecutar durante AJAX — esta función es solo para page loads de frontend
+		if (wp_doing_ajax()) {
+			return;
+		}
+
 		if (!is_user_logged_in()) return;
 
 		$user_id = get_current_user_id();

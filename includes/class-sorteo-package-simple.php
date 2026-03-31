@@ -1688,12 +1688,12 @@ function sco_pkg_sync_reservations_with_cart($force = false)
     foreach (WC()->cart->get_cart() as $cart_item) {
         $qty = max(1, (int) ($cart_item['quantity'] ?? 1));
 
-        // 1) Productos sueltos (no paquete) con stock administrado
+        // 1) Productos sueltos (no paquete) — reservar todos para evitar duplicados
         $product = isset($cart_item['data']) ? $cart_item['data'] : null;
-        if ($product && $product->managing_stock()) {
+        if ($product) {
             $pid = (int) $product->get_id();
             // No reservar el propio producto de tipo sco_package; se reservan sus componentes abajo
-            if ($product->get_type() !== 'sco_package') {
+            if (!in_array($product->get_type(), array('sco_package', 'paquete_sco_new'), true)) {
                 $needed[$pid] = ($needed[$pid] ?? 0) + $qty;
                 if (sco_pkg_debug_enabled()) {
                     sco_pkg_log_debug(sprintf('SCO Reservations: add standalone product #%d qty %d', $pid, $qty));
@@ -1763,7 +1763,7 @@ function sco_pkg_sync_reservations_with_cart($force = false)
 // Hook sync on cart changes
 add_action('woocommerce_add_to_cart', function ($cart_item_key, $product_id, $quantity, $variation_id, $variation, $cart_item_data) {
     $product = wc_get_product($product_id);
-    if ($product && $product->get_type() === 'sco_package') {
+    if ($product && in_array($product->get_type(), array('sco_package', 'simple', 'variable'), true)) {
         sco_pkg_sync_reservations_with_cart();
     }
 }, 20, 6);

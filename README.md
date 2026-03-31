@@ -1,4 +1,4 @@
-# 🎲 Plugin Sorteo v1.9.33
+# 🎲 Plugin Sorteo v1.9.36
 
 Plugin completo para sorteos automáticos, productos sorpresa, avisos personalizados, exportación de ganadores, métricas avanzadas, gestión de stock con HPOS y marcos visuales en WooCommerce.
 
@@ -6,13 +6,45 @@ Plugin completo para sorteos automáticos, productos sorpresa, avisos personaliz
 
 Para ver el historial completo de versiones y cambios detallados, consulta [CHANGELOG.md](CHANGELOG.md)
 
-### 2026-03-07 (v1.9.33)
-- 🐛 **Fix exportación Extra WooCommerce (Exportar Ventas con Desglose de Paquetes)**: misma prioridad de datos del pedido editado para reflejar reemplazos manuales.
+### 2026-03-14 (v1.9.36)
+- 🐛 **Fix fatal error de memoria en AJAX**: `maybe_run_auto_draw()`, `update_metrics_on_admin_init()` y `check_recent_purchase()` cargaban todas las órdenes (`limit => -1`) durante requests AJAX. Ahora se saltan con `wp_doing_ajax()`.
+- ⚡ **Zero wc_get_product en Step 1**: tipo de producto se verifica via taxonomía, carrito se lee desde session raw.
+
+### 2026-03-14 (v1.9.35)
+- ⚡ **Optimización Paquete SCO Nuevo**: reescrita `sco_pkg_new_get_category_products()` con query SQL pura (`WP_Query` + `meta_query` + `tax_query`). Eliminadas hasta 1200 llamadas a `wc_get_product()`. Memoria de ~240MB a <5MB.
+- ⚡ **Batch add-to-cart**: arquitectura split-AJAX (1 request = obtener IDs, N requests = 1 producto c/u). Memoria liberada entre requests. Progreso visual "Agregando 5/25...". Elimina fatal error 512MB.
+- ✅ **Cart-awareness**: el AJAX handler excluye productos ya en el carrito, evitando duplicados en clicks seguidos.
+- ✅ **Debounce JS**: guard `sco-submitting` previene envíos duplicados por doble-click.
+- 🔧 **Documentación interna**: docblock en hooks de stock management (reservado para futuro uso composite).
+
+### 2026-03-12 (v1.9.34)
+- 🐛 **Fix filtro de fechas**: perdía pedidos del último día del rango. Corregido con `+1 day` compatible con HPOS.
+- 🐛 **Fix filtro de categorías**: variaciones de producto se excluían por no tener categorías propias. Ahora usa fallback al producto padre.
+- 🐛 **Fix productos eliminados**: pedidos con productos eliminados/trashados se omitían del CSV. Ahora detecta por meta y emite fila con datos del item.
+- 🐛 **Fix paquetes sin componentes**: paquetes cuyas componentes no se podían resolver desaparecían del CSV. Ahora emite fallback con lista cruda de "Productos incluidos".
+- ✅ **Nuevas columnas**: Tipo Producto, Categoría y Estado Pedido en el CSV exportado.
+- ✅ **Duplicados históricos**: la detección ahora compara contra TODAS las órdenes, no solo el rango seleccionado.
+- ✅ **Nombre de archivo con rango**: `export_ventas_2026-01-01_a_2026-03-12.csv` en vez de solo la fecha actual.
+- ⚡ **Optimización exports grandes**: `set_time_limit(0)`, `wp_raise_memory_limit`, timeout AJAX ilimitado, y reducción de pasadas redundantes.
+- 🔧 **Búsqueda mejorada**: `find_product_id_by_exact_name` busca por título, SKU derivado y LIKE. Incluye productos en draft/trash.
+- 🔧 **class-sorteo-export.php**: nuevo método `get_package_components()` con 3 fuentes de resolución.
+
+### 2026-03-12 (v1.9.33)
+- ✅ **Nuevo filtro por categoría en Exportar Ventas (Extra WooCommerce)**: permite exportar solo productos/componentes de una o más categorías seleccionadas.
+- ✅ **Exportación grande en ZIP**: cuando la exportación supera el umbral, se descarga un `.zip` con múltiples archivos CSV por bloques para evitar problemas de memoria.
+- ✅ **Umbral configurable**: puedes definir en la pantalla de exportación cuántas filas tendrá cada archivo antes de compactar en ZIP.
+
+### 2026-03-09 (v1.9.33)
+- ⚡ **Optimización Paquete SCO (Nuevo)**: se eliminó la carga completa de productos por categoría (`numberposts => -1`) y se reemplazó por selección paginada y limitada para reducir uso de memoria.
+- ⚡ **Optimización Exportar Ventas (Extra WooCommerce)**: generación CSV en dos pasadas (conteo + escritura) sin acumular todas las filas en memoria.
+- ✅ **Resultado esperado**: menos errores `500` por memoria al agregar paquetes nuevos y mejor estabilidad al exportar ventas grandes.
 
 ### 2026-03-08 (v1.9.33)
 - ✅ **Ajuste de duplicados en Exportar Ventas (Extra WooCommerce)**: detección global en todo el CSV exportado.
-- ✅ **Sin falsos positivos por origen**: se separa la comparación entre `Paquete: ...` y `Venta directa`.
-- ℹ️ **Usuario+Compras**: se mantiene con la lógica original (sin los cambios de esta iteración).
+- ✅ **Criterio único por SKU/ID**: se marca duplicado aunque aparezca entre `Paquete: ...` y `Venta directa`.
+
+### 2026-03-07 (v1.9.33)
+- 🐛 **Fix exportación Extra WooCommerce (Exportar Ventas con Desglose de Paquetes)**: misma prioridad de datos del pedido editado para reflejar reemplazos manuales.
 
 ### 2026-03-01 (v1.9.32)
 - 🐛 **Fix**: Mensaje de sorteo automático inmediato no renderizaba HTML. Se reemplazó `esc_js()` por `wp_json_encode()` para preservar etiquetas HTML en `innerHTML`.
