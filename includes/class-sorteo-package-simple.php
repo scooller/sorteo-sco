@@ -1438,6 +1438,13 @@ function sco_pkg_get_committed_product_ids()
         global $wpdb;
         $committed = array();
 
+        $cache_key = 'sorteo_sco_committed_ids';
+        $cached_committed = get_transient($cache_key);
+        if (is_array($cached_committed) && !empty($cached_committed)) {
+            sco_pkg_log_debug('SCO Committed: Using transient cache (' . count($cached_committed) . ' products)');
+            $committed = $cached_committed;
+        }
+
         $hpos_enabled = class_exists('\Automattic\WooCommerce\Utilities\OrderUtil')
             && \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled();
 
@@ -1445,21 +1452,23 @@ function sco_pkg_get_committed_product_ids()
 
         $statuses = "('wc-pending', 'wc-processing', 'wc-on-hold', 'wc-completed')";
 
-        if ($hpos_enabled) {
-            $orders_join = "JOIN {$wpdb->prefix}wc_orders o ON oi.order_id = o.id";
-            $orders_where = "AND o.type = 'shop_order' AND o.status IN $statuses";
-        } else {
-            $orders_join = "JOIN {$wpdb->posts} o ON oi.order_id = o.ID";
-            $orders_where = "AND o.post_type = 'shop_order' AND o.post_status IN $statuses";
-        }
-
         // 1) Productos vendidos directamente (line items normales)
-        $sql_direct = "SELECT DISTINCT CAST(oim.meta_value AS UNSIGNED)
-                       FROM {$wpdb->prefix}woocommerce_order_itemmeta oim
-                       JOIN {$wpdb->prefix}woocommerce_order_items oi ON oim.order_item_id = oi.order_item_id
-                       $orders_join
-                       WHERE oim.meta_key = '_product_id'
-                       $orders_where";
+        if ($hpos_enabled) {
+            $sql_direct = "SELECT DISTINCT opl.product_id
+                           FROM {$wpdb->prefix}wc_order_product_lookup opl
+                           JOIN {$wpdb->prefix}wc_orders o ON opl.order_id = o.id
+                           WHERE o.type = 'shop_order'
+                             AND o.status IN $statuses
+                             AND opl.product_id > 0";
+        } else {
+            $sql_direct = "SELECT DISTINCT CAST(oim.meta_value AS UNSIGNED)
+                           FROM {$wpdb->prefix}woocommerce_order_itemmeta oim
+                           JOIN {$wpdb->prefix}woocommerce_order_items oi ON oim.order_item_id = oi.order_item_id
+                           JOIN {$wpdb->posts} o ON oi.order_id = o.ID
+                           WHERE oim.meta_key = '_product_id'
+                             AND o.post_type = 'shop_order'
+                             AND o.post_status IN $statuses";
+        }
 
         $direct_ids = $wpdb->get_col($sql_direct);
 
@@ -1478,13 +1487,24 @@ function sco_pkg_get_committed_product_ids()
 
         sco_pkg_log("SCO Committed: Found $direct_count direct products in active orders");
 
-        // 2) Productos dentro de composiciones de paquetes
-        $sql_pkg = "SELECT oim.meta_value
-                    FROM {$wpdb->prefix}woocommerce_order_itemmeta oim
-                    JOIN {$wpdb->prefix}woocommerce_order_items oi ON oim.order_item_id = oi.order_item_id
-                    $orders_join
-                    WHERE oim.meta_key = '_sco_package'
-                    $orders_where";
+                // 2) Productos dentro de composiciones de paquetes
+                if ($hpos_enabled) {
+                        $sql_pkg = "SELECT oim.meta_value
+                                                FROM {$wpdb->prefix}woocommerce_order_itemmeta oim
+                                                JOIN {$wpdb->prefix}woocommerce_order_items oi ON oim.order_item_id = oi.order_item_id
+                                                JOIN {$wpdb->prefix}wc_orders o ON oi.order_id = o.id
+                                                WHERE oim.meta_key = '_sco_package'
+                                                    AND o.type = 'shop_order'
+                                                    AND o.status IN $statuses";
+                } else {
+                        $sql_pkg = "SELECT oim.meta_value
+                                                FROM {$wpdb->prefix}woocommerce_order_itemmeta oim
+                                                JOIN {$wpdb->prefix}woocommerce_order_items oi ON oim.order_item_id = oi.order_item_id
+                                                JOIN {$wpdb->posts} o ON oi.order_id = o.ID
+                                                WHERE oim.meta_key = '_sco_package'
+                                                    AND o.post_type = 'shop_order'
+                                                    AND o.post_status IN $statuses";
+                }
 
         $results = $wpdb->get_col($sql_pkg);
 
@@ -1540,6 +1560,8 @@ function sco_pkg_get_committed_product_ids()
         }
 
         sco_pkg_log('SCO COMMITTED: ' . count($committed) . ' products blocked (orders + cart reservations: ' . $cart_reserved . ' from carts)');
+
+        set_transient($cache_key, $committed, 60);
 
         return $committed;
     } catch (Exception $e) {

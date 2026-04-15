@@ -1298,23 +1298,14 @@ class Sorteo_WC_Extra
             wp_send_json_error(['message' => __('No autorizado', 'sorteo-sco')]);
         }
 
-        global $wpdb;
-
-        // Obtener pedidos con paquetes
-        $orders_query = "
-			SELECT p.ID as order_id, p.post_date
-			FROM {$wpdb->posts} p
-			INNER JOIN {$wpdb->prefix}woocommerce_order_items oi ON p.ID = oi.order_id
-			INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim ON oi.order_item_id = oim.order_item_id
-			WHERE p.post_type = 'shop_order'
-			AND oim.meta_key = '_sco_package'
-			AND p.post_status IN ('wc-processing', 'wc-completed')
-			GROUP BY p.ID
-			ORDER BY p.post_date DESC
-			LIMIT 50
-		";
-
-        $orders = $wpdb->get_results($orders_query);
+        // HPOS-safe: usar API de WooCommerce para obtener pedidos recientes.
+        $order_ids = wc_get_orders([
+            'status' => ['processing', 'completed'],
+            'limit' => 50,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'return' => 'ids',
+        ]);
 
         $total_sold = 0;
         $total_components_reduced = 0;
@@ -1322,8 +1313,8 @@ class Sorteo_WC_Extra
         $total_revenue = 0;
         $orders_data = [];
 
-        foreach ($orders as $order_row) {
-            $order = wc_get_order($order_row->order_id);
+        foreach ($order_ids as $order_id) {
+            $order = wc_get_order($order_id);
             if (!$order) continue;
 
             foreach ($order->get_items() as $item_id => $item) {
@@ -3113,43 +3104,28 @@ class Sorteo_WC_Extra
             $date_to = isset($_POST['date_to']) ? sanitize_text_field($_POST['date_to']) : '';
             $statuses = isset($_POST['statuses']) ? array_map('sanitize_text_field', (array) $_POST['statuses']) : ['processing', 'completed'];
 
-            // Usar WP_Query directamente para mejor control de fechas
+            // HPOS-safe: usar wc_get_orders con filtros equivalentes.
             $query_args = array(
-                'post_type' => 'shop_order',
-                'posts_per_page' => -1,
-                'post_status' => array_map(function ($s) {
-                    return 'wc-' . $s;
-                }, $statuses),
+                'limit' => -1,
+                'status' => $statuses,
                 'orderby' => 'date',
                 'order' => 'DESC',
+                'return' => 'ids',
             );
 
-            // Agregar filtros de fecha
-            if (!empty($date_from) || !empty($date_to)) {
-                $date_query = array();
-                if (!empty($date_from)) {
-                    $date_query[] = array(
-                        'after' => $date_from . ' 00:00:00',
-                        'inclusive' => true,
-                    );
-                }
-                if (!empty($date_to)) {
-                    $date_query[] = array(
-                        'before' => $date_to . ' 23:59:59',
-                        'inclusive' => true,
-                    );
-                }
-                if (!empty($date_query)) {
-                    $query_args['date_query'] = $date_query;
-                }
+            if (!empty($date_from) && !empty($date_to)) {
+                $query_args['date_created'] = $date_from . '...' . $date_to;
+            } elseif (!empty($date_from)) {
+                $query_args['date_created'] = '>=' . $date_from;
+            } elseif (!empty($date_to)) {
+                $query_args['date_created'] = '<=' . $date_to;
             }
 
-            $query = new WP_Query($query_args);
-            $order_ids = $query->posts;
+            $order_ids = wc_get_orders($query_args);
             $orders = array();
 
-            foreach ($order_ids as $post) {
-                $order = wc_get_order($post->ID);
+            foreach ($order_ids as $order_id) {
+                $order = wc_get_order($order_id);
                 if ($order) {
                     $orders[] = $order;
                 }
